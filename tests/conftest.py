@@ -73,6 +73,34 @@ _stub(
 
 
 # --------------------------------------------------------------------------- #
+#  Keyboard / clipboard                                                        #
+# --------------------------------------------------------------------------- #
+
+# Used by paste.py / text_inject.py / dictation.py. In the pytest job
+# these are installed for real (tests in test_core_logic.py monkeypatch
+# their attributes); the stub only kicks in for the smoke-import job
+# which deliberately runs a minimal dep set.
+_stub(
+    "keyboard",
+    parse_hotkey=lambda hk: ([], hk),
+    is_pressed=lambda key: False,
+    add_hotkey=lambda *a, **kw: None,
+    on_release_key=lambda *a, **kw: None,
+    unhook=lambda *a, **kw: None,
+    send=lambda key: None,
+    write=lambda text, delay=0: None,
+    press=lambda key: None,
+    release=lambda key: None,
+)
+
+_stub(
+    "pyperclip",
+    copy=lambda v: None,
+    paste=lambda: "",
+)
+
+
+# --------------------------------------------------------------------------- #
 #  Tray / system UI                                                            #
 # --------------------------------------------------------------------------- #
 
