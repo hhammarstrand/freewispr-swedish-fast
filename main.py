@@ -607,17 +607,44 @@ def _rebuild_menu():
 
 def _build_menu():
     startup_label = "✓ Starta med Windows" if _is_startup_enabled() else "Starta med Windows"
+    preroll_on = bool(_config.get("preroll_enabled", False)) if _config else False
+    preroll_label = ("✓ Pre-roll (snabbare start)" if preroll_on
+                     else "Pre-roll (snabbare start)")
     return pystray.Menu(
         pystray.MenuItem("Snippets", _open_snippets),
         pystray.MenuItem("Personlig ordlista", _open_dictionary),
         pystray.MenuItem("Inställningar", _open_settings),
         pystray.MenuItem("Stil", _build_style_submenu()),
+        pystray.MenuItem(preroll_label, _toggle_preroll),
         pystray.MenuItem("Hantera modeller", _open_model_manager),
         pystray.MenuItem("Sekretess och data", _open_privacy),
         pystray.MenuItem(startup_label, _toggle_startup),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(f"Avsluta {APP_DISPLAY_NAME}", _quit),
     )
+
+
+def _toggle_preroll(_=None):
+    """Toggle the pre-roll feature; persists to config and applies live."""
+    if not _config:
+        return
+    new_value = not bool(_config.get("preroll_enabled", False))
+    _config["preroll_enabled"] = new_value
+    try:
+        cfg_module.save(_config)
+    except Exception as e:
+        log.error("Kunde inte spara pre-roll-installningen: %s", e)
+        if _indicator:
+            _indicator.show("Kunde inte spara", state="error")
+            _indicator.hide(delay_ms=3000)
+        return
+    _apply_preroll_from_config()
+    if _indicator:
+        msg = ("Pre-roll på — mikrofon lyser alltid"
+               if new_value else "Pre-roll av")
+        _indicator.show(msg, state="info")
+        _indicator.hide(delay_ms=3000)
+    _rebuild_menu()
 
 
 # Style preset labels (Swedish) shown in the tray submenu. Values must
