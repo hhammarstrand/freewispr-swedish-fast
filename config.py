@@ -24,6 +24,12 @@ DEFAULTS = {
     "llm_privacy_accepted": False,
     # Lägsta RMS-nivå (0.0-1.0) som räknas som tal. Se DEFAULT_MIN_RMS i dictation.py.
     "min_rms": 0.003,
+    # Paste pipeline — "auto" (hybrid), "clipboard", or "inject".
+    # Hybrid uses keyboard.write for text <= paste_threshold chars and
+    # clipboard + Ctrl+V for anything longer. ~150 ms latency win on
+    # short utterances at the cost of slightly slower long ones.
+    "paste_strategy": "auto",
+    "paste_threshold": 200,
 }
 
 

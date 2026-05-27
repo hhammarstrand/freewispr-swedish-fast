@@ -116,6 +116,8 @@ def _make_dictation(transcriber):
         indicator=_indicator,
         mic_device=_config.get("mic_device"),
         min_rms=float(_config.get("min_rms", DEFAULT_MIN_RMS)),
+        paste_strategy=_config.get("paste_strategy", "auto"),
+        paste_threshold=int(_config.get("paste_threshold", 200)),
     )
 
 

@@ -679,7 +679,8 @@ def test_dictation_worker_does_not_paste_after_stop(monkeypatch):
     mode.hotkey = "ctrl+space"
     mode.indicator = None
     mode.on_status = lambda msg: None
-    monkeypatch.setattr(dictation, "paste_text", lambda text, active_modifiers=(): pasted.append(text))
+    monkeypatch.setattr(dictation, "inject_text",
+                        lambda text, active_modifiers=(), strategy="auto", paste_threshold=200: pasted.append(text))
 
     mode._transcribe(np.ones(16000, dtype=np.float32))
 
@@ -745,3 +746,138 @@ def test_transcriber_close_waits_for_inflight_transcribe(fake_transcriber_deps):
     assert close_done.is_set()
     assert inst.model is None
     assert original_model.in_transcribe is False
+
+# ---------- text_inject (PR 1.2 hybrid paste) ---------- #
+
+def test_text_inject_short_text_uses_keyboard_write(monkeypatch):
+    """Default threshold is 200 chars — short text bypasses clipboard."""
+    text_inject = importlib.reload(importlib.import_module("text_inject"))
+
+    typed = []
+    # Some other tests have stubbed sys.modules["keyboard"] with a partial
+    # namespace; ensure write exists on whatever stub text_inject sees.
+    monkeypatch.setattr(text_inject.keyboard, "write",
+                        lambda text, delay=0: typed.append(text),
+                        raising=False)
+    monkeypatch.setattr(text_inject, "_release_modifiers", lambda mods=(): None)
+    monkeypatch.setattr(text_inject, "_inject_via_clipboard",
+                        lambda text, gen: (_ for _ in ()).throw(
+                            AssertionError("clipboard path must not run for short text")))
+
+    ok = text_inject.inject("hej alla glada")
+
+    assert ok is True
+    assert typed == ["hej alla glada "]  # trailing space appended
+
+
+def test_text_inject_long_text_uses_clipboard(monkeypatch):
+    """Text longer than the threshold falls back to clipboard."""
+    text_inject = importlib.reload(importlib.import_module("text_inject"))
+
+    routed = []
+    monkeypatch.setattr(text_inject, "_release_modifiers", lambda mods=(): None)
+    monkeypatch.setattr(text_inject, "_inject_via_keyboard",
+                        lambda text: (_ for _ in ()).throw(
+                            AssertionError("keyboard path must not run for long text")))
+    monkeypatch.setattr(text_inject, "_inject_via_clipboard",
+                        lambda text, gen: routed.append(("clipboard", text, gen)) or True)
+
+    long_text = "ord " * 80  # ~320 chars, well past 200 threshold
+    ok = text_inject.inject(long_text)
+
+    assert ok is True
+    assert routed[0][0] == "clipboard"
+
+
+def test_text_inject_forced_clipboard_strategy_ignores_threshold(monkeypatch):
+    text_inject = importlib.reload(importlib.import_module("text_inject"))
+
+    routed = []
+    monkeypatch.setattr(text_inject, "_release_modifiers", lambda mods=(): None)
+    monkeypatch.setattr(text_inject, "_inject_via_keyboard",
+                        lambda text: (_ for _ in ()).throw(AssertionError("must not run")))
+    monkeypatch.setattr(text_inject, "_inject_via_clipboard",
+                        lambda text, gen: routed.append(text) or True)
+
+    text_inject.inject("kort text", strategy="clipboard")
+    assert routed == ["kort text"]
+
+
+def test_text_inject_forced_inject_strategy_ignores_threshold(monkeypatch):
+    text_inject = importlib.reload(importlib.import_module("text_inject"))
+
+    typed = []
+    monkeypatch.setattr(text_inject, "_release_modifiers", lambda mods=(): None)
+    monkeypatch.setattr(text_inject.keyboard, "write",
+                        lambda text, delay=0: typed.append(text),
+                        raising=False)
+    monkeypatch.setattr(text_inject, "_inject_via_clipboard",
+                        lambda text, gen: (_ for _ in ()).throw(AssertionError("must not run")))
+
+    long_text = "ord " * 80
+    text_inject.inject(long_text, strategy="inject")
+
+    assert typed and typed[0].startswith("ord ord ord")
+
+
+def test_text_inject_keyboard_failure_falls_back_to_clipboard(monkeypatch):
+    text_inject = importlib.reload(importlib.import_module("text_inject"))
+
+    monkeypatch.setattr(text_inject, "_release_modifiers", lambda mods=(): None)
+
+    def boom(text, delay=0):
+        raise RuntimeError("layout missing char")
+    monkeypatch.setattr(text_inject.keyboard, "write", boom, raising=False)
+
+    routed = []
+    monkeypatch.setattr(text_inject, "_inject_via_clipboard",
+                        lambda text, gen: routed.append(text) or True)
+
+    ok = text_inject.inject("hej")
+
+    assert ok is True
+    assert routed == ["hej"]
+
+
+def test_text_inject_empty_text_is_noop(monkeypatch):
+    text_inject = importlib.reload(importlib.import_module("text_inject"))
+
+    monkeypatch.setattr(text_inject, "_release_modifiers",
+                        lambda mods=(): (_ for _ in ()).throw(AssertionError("must not run")))
+
+    assert text_inject.inject("   ") is False
+    assert text_inject.inject("") is False
+
+
+def test_text_inject_generation_counter_increments():
+    text_inject = importlib.reload(importlib.import_module("text_inject"))
+
+    g1 = text_inject._next_generation()
+    g2 = text_inject._next_generation()
+    g3 = text_inject._next_generation()
+
+    assert g1 < g2 < g3
+    assert text_inject._current_generation() == g3
+
+
+def test_text_inject_restore_skips_when_newer_generation(monkeypatch):
+    """A second dictation starting mid-restore must cancel the first restore."""
+    text_inject = importlib.reload(importlib.import_module("text_inject"))
+
+    restored = []
+    monkeypatch.setattr(text_inject.pyperclip, "copy",
+                        lambda v: restored.append(v))
+    # Pretend the clipboard always still holds our dictated marker — would
+    # otherwise loop until timeout.
+    monkeypatch.setattr(text_inject.pyperclip, "paste", lambda: "dictated text ")
+    monkeypatch.setattr(text_inject.time, "sleep", lambda s: None)
+    monkeypatch.setattr(text_inject.time, "monotonic", lambda: 0.0)
+
+    # gen=1 was issued, but generation has already advanced past it.
+    text_inject._next_generation()  # gen = 1
+    text_inject._next_generation()  # gen = 2 (newer)
+
+    text_inject._restore_clipboard("old", "dictated text ", gen=1)
+
+    # Restore must not run because gen 1 is stale.
+    assert restored == []

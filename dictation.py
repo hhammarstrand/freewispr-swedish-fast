@@ -6,7 +6,7 @@ import numpy as np
 
 from audio import MicRecorder, finalize_audio
 from transcriber import Transcriber
-from paste import paste_text
+from text_inject import inject as inject_text
 from modifiers import normalize_all, is_modifier
 import snippets as snippet_module
 import sounds
@@ -60,7 +60,9 @@ class DictationMode:
     def __init__(self, transcriber: Transcriber, hotkey: str = "ctrl+space",
                  on_status=None, indicator=None,
                  mic_device: str | dict | None = None,
-                 min_rms: float = DEFAULT_MIN_RMS):
+                 min_rms: float = DEFAULT_MIN_RMS,
+                 paste_strategy: str = "auto",
+                 paste_threshold: int = 200):
         self.transcriber = transcriber
         self.hotkey = hotkey
         # MicRecorder accepts str (legacy), dict (structured), or None.
@@ -68,6 +70,8 @@ class DictationMode:
         self.on_status = on_status or (lambda msg: None)
         self.indicator = indicator
         self.min_rms = min_rms
+        self.paste_strategy = paste_strategy
+        self.paste_threshold = int(paste_threshold)
         self._active = False
         self._recording = False
         self._hook_handles: list = []
@@ -262,7 +266,12 @@ class DictationMode:
                 if self._worker_stop.is_set() or not self._active:
                     log.info("Hoppar över paste från stale transkribering")
                     return
-                paste_text(text, active_modifiers=self._modifier_keys)
+                inject_text(
+                    text,
+                    active_modifiers=self._modifier_keys,
+                    strategy=self.paste_strategy,
+                    paste_threshold=self.paste_threshold,
+                )
                 self.on_status(f"Klistrad — håll {self.hotkey.upper()} igen")
                 if self.indicator:
                     self.indicator.show("Klistrad", state="done")
