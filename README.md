@@ -1,37 +1,45 @@
-# freewispr-swedish
+# freewispr-fast
 
-**Svensk speech-to-text diktering for Windows.**
-Diktera var som helst. Lokal Whisper-diktering, med valfri onlinelagranskning via LLM.
+**Svensk speech-to-text diktering for Windows — optimerad for latens.**
+Diktera var som helst. Lokal transkribering med Parakeet eller Whisper, med valfri asynkron LLM-granskning.
 
 > **Fork av:** [x26prakhar/freewispr](https://github.com/x26prakhar/freewispr)
 > **Licens:** MIT
 
 ---
 
-## Vad ar freewispr-swedish?
+## Vad ar freewispr-fast?
 
-freewispr-swedish ar en modifierad version av freewispr optimerad for **svenska**. Istallet for OpenAI:s Whisper-modeller anvands **KBLab:s svenska Whisper-modeller** som ger upp till **47% lagre WER** (Word Error Rate) pa svenska.
+freewispr-fast ar en prestandafork av freewispr-swedish med fokus pa **lagsta mojliga latens** for svensk diktering. Appen stodjer tva STT-backends:
 
-Standardmodellen ar `KBLab/kb-whisper-small` -- battre precision pa svenska an OpenAI:s `whisper-small`.
+- **Parakeet** (nvidia/parakeet-tdt-0.6b-v3) — standard pa GPU, ~148 ms medellatens (4x snabbare an Whisper)
+- **Whisper** (KBLab/kb-whisper-*) — fallback for CPU eller nar NeMo inte ar installerat
+
+Backend kan bytas fran systemfaltets meny (Backend → Auto/Parakeet/Whisper).
 
 ---
 
 ## Funktionalitet
 
-- **Diktering** -- hall tangent nedtryckt, prata, slapp. Texten klistras in direkt vid markoren
-- **Flytande indikator** -- visar Lyssnar / Transkriberar / Klar / Fel
-- **Ljudatergivning** -- mjuka pop-ljud vid inspelningsstart och -stopp
-- **Mikrofonval** -- valj mikrofon i installningar (WASAPI, DirectSound, MME)
-- **Tystnadsdetektion** -- avvisar for tysta inspelningar automatiskt (RMS-baserad)
-- **Personlig ordlista** -- lagg till rattningar for ord som transkriberas fel
-- **Hotwords** -- mata in egna termer/namn som Whisper ska prioritera
-- **Snippets** -- textmallar som expanderas automatiskt
-- **Flermodell-stod** -- tiny, base, small, medium, large (alla KBLab)
-- **Starta med Windows** -- enkel toggle i menyn
-- **Systemfack** -- lever diskret i bakgrunden
-- **Offline-lage** -- Whisper-diktering sker lokalt efter forsta modellnedladdningen
-- **Valfri LLM-granskning** -- kan skicka transkriberad text till GitHub Models/Azure for extra textkorrigering
-- **GPU-stod** -- automatisk CUDA-detektion for NVIDIA-grafikkort
+- **Diktering** — hall tangent nedtryckt, prata, slapp. Texten klistras in direkt vid markoren
+- **Dubbel backend** — Parakeet (GPU, snabbast) eller KBLab Whisper (CPU/GPU, bast egennamn)
+- **Asynkron LLM-granskning** — lokal text klistras in omedelbart; LLM-polish kor i bakgrunden och kopierar till urklipp om texten andras
+- **Flytande indikator** — visar Lyssnar / Transkriberar / Klar / Fel med animerade equalizer-staplar
+- **Ljudatergivning** — mjuka pop-ljud vid inspelningsstart och -stopp
+- **Pre-roll** — valfri ~500 ms ringbuffer sa inledande konsonanter inte klipps
+- **Hybrid textinmatning** — kort text via keyboard.write (~0 ms), langre via urklipp+Ctrl+V
+- **Mikrofonval** — valj mikrofon i installningar (WASAPI, DirectSound, MME)
+- **Tystnadsdetektion** — avvisar for tysta inspelningar automatiskt (RMS-baserad)
+- **Personlig ordlista** — lagg till rattningar for ord som transkriberas fel
+- **Hotwords** — mata in egna termer/namn som modellen ska prioritera
+- **Snippets** — textmallar som expanderas automatiskt
+- **Auto-larning** — LLM-korrigeringar laggs automatiskt i ordlistan efter upprepade forekomster
+- **Flermodell-stod** — tiny, base, small, medium, large (alla KBLab Whisper)
+- **Stilpresets** — vardaglig/formell/kod/e-post/egen prompt for LLM-granskning
+- **Starta med Windows** — enkel toggle i menyn
+- **Systemfack** — lever diskret i bakgrunden
+- **Offline-lage** — Parakeet/Whisper-diktering sker helt lokalt
+- **GPU-stod** — automatisk CUDA-detektion for NVIDIA-grafikkort
 
 ---
 
@@ -57,14 +65,16 @@ Ladda ner senaste releasen fran [**Releases**](https://github.com/hhammarstrand/
 
 ## Integritet och natverk
 
-Som standard transkriberas ljud lokalt med KBLab Whisper. Appen kan kontakta natverk i foljande fall:
+Som standard sker **all** transkribering lokalt — inget ljud eller text lamnar datorn.
 
-- Forsta modellstarten laddar ner vald KBLab-modell fran Hugging Face om modellen saknas lokalt.
-- LLM-granskning ar avstangd som standard, men nar du aktiverar den skickas transkriberad text till GitHub Models/Azure for korrigering.
-- LLM-granskning skickar texten efter lokal Whisper-transkribering, inte ljudfilen.
-- Dikterad text loggas inte som standard; loggen innehaller metadata som langd, modell, latency och status.
-- Text klistras in via systemets urklipp och appen forsoker aterstalla tidigare urklippsinnehall efter paste.
-- Om LLM-granskning andrar text kan lokala ordkorrigeringar sparas i `learned.json` och `corrections.json` for att forbättra framtida lokal transkribering.
+- **Ljud stannar lokalt.** Parakeet och Whisper kor helt pa din maskin. Inget ljud skickas over natverk.
+- **Modellnedladdning.** Forsta starten laddar ner modellen fran Hugging Face / NVIDIA (en gang). Darefter ar appen offline.
+- **LLM-granskning ar AVSTANGD som standard.** Nar du aktiverar den skickas *transkriberad text* (aldrig ljud) till GitHub Models/Azure for korrigering.
+- **Asynkron LLM-polish.** Nar LLM ar pa klistras lokal text in forst. LLM-resultatet kopieras till urklipp i bakgrunden — synligt via en toast-notis.
+- **Urklipp.** Text klistras in via systemets urklipp. Appen forsoker aterstalla tidigare urklippsinnehall efter paste.
+- **Loggning.** Dikterad text loggas inte som standard; loggen innehaller metadata (langd, modell, latency, status).
+- **Lokal data.** Ordkorrektioner, snippets och inlarningsdata sparas i `~/.freewispr-swedish-parakeet/`. Rensa via menyval "Sekretess och data".
+- **API-nycklar** sparas i Windows Credential Manager via `keyring`, aldrig i config-filen.
 
 ---
 
@@ -74,14 +84,17 @@ Som standard transkriberas ljud lokalt med KBLab Whisper. Appen kan kontakta nat
 
 ```bash
 # Klona repot
-git clone https://github.com/hhammarstrand/freewispr-swedish.git
-cd freewispr-swedish
+git clone https://github.com/hhammarstrand/freewispr-swedish-fast.git
+cd freewispr-swedish-fast
 
 # Installera dependencies
 pip install -r requirements.txt
 
 # (Valfritt) Installera GPU-stod (NVIDIA, ~2.5 GB nedladdning)
 pip install torch --index-url https://download.pytorch.org/whl/cu124
+
+# (Valfritt) Installera Parakeet-backend (kraver GPU, ~6 GB nedladdning)
+pip install nemo_toolkit[asr]
 
 # Kor direkt fran kallkod
 python main.py
@@ -115,7 +128,7 @@ freewispr-swedish anvander [KBLab:s Whisper-modeller](https://huggingface.co/KBL
 
 **Standard:** `small` -- basta balansen mellan hastighet och precision for svenska.
 
-Modeller sparas i `~/.freewispr-swedish/models/` och laddas ner automatiskt vid forsta anvandning.
+Modeller sparas i `~/.freewispr-swedish-parakeet/models/` och laddas ner vid forsta anvandning.
 
 ### Konvertera modeller (medium/large)
 
@@ -127,7 +140,7 @@ python convert_model.py medium
 python convert_model.py large
 ```
 
-Konverterade modeller sparas i `~/.freewispr-swedish/models/kb-whisper-{size}-ct2/`.
+Konverterade modeller sparas i `~/.freewispr-swedish-parakeet/models/kb-whisper-{size}-ct2/`.
 
 ---
 
@@ -135,10 +148,13 @@ Konverterade modeller sparas i `~/.freewispr-swedish/models/kb-whisper-{size}-ct
 
 Hogerklicka pa systemfacksikonen och valj **Installningar**.
 
-- **Snabbtangent** -- klicka och tryck valfri tangentkombination
-- **Mikrofon** -- valj specifik mikrofon eller "Auto"
-- **Modell** -- valj storlek (tiny/base/small/medium/large)
-- **GPU (CUDA)** -- sla pa/av GPU-acceleration
+- **Snabbtangent** — klicka och tryck valfri tangentkombination
+- **Mikrofon** — valj specifik mikrofon eller "Auto"
+- **Modell** — valj storlek (tiny/base/small/medium/large) for Whisper-fallback
+- **GPU (CUDA)** — sla pa/av GPU-acceleration
+- **Backend** — valj Auto/Parakeet/Whisper fran tray-menyn
+- **Stil** — vardaglig/formell/kod/e-post/egen prompt for LLM-granskning
+- **Pre-roll** — hall mikrofonen aktiv for snabbare start (mic-LED lyser)
 
 ---
 
@@ -149,7 +165,7 @@ Hotwords ar termer, namn och fraser som Whisper ska prioritera vid transkriberin
 Hotwords hamtas fran tva kallor:
 
 1. **Personlig ordlista** -- de korrekta varden du lagt in via systemfacket ("Personlig ordlista")
-2. **hotwords.txt** -- valfri fil pa `~/.freewispr-swedish/hotwords.txt`, ett ord/fras per rad
+2. **hotwords.txt** -- valfri fil pa `~/.freewispr-swedish-parakeet/hotwords.txt`, ett ord/fras per rad
 
 Exempel pa `hotwords.txt`:
 ```
@@ -172,42 +188,51 @@ Appen stodjer WASAPI, DirectSound och MME som audio-backends, med automatisk pri
 2. **DirectSound** (bra kompatibilitet)
 3. **MME** (bredast stod)
 
-Inspelning sker i mikrofonens nativa samplerate (t.ex. 48 kHz) och resamplas till 16 kHz for Whisper med `scipy.signal.resample_poly` (anti-alias FIR-filter). Flerkanaliga mikrofoner mixas till mono automatiskt.
+Inspelning sker i mikrofonens nativa samplerate (t.ex. 48 kHz) och resamplas till 16 kHz. Nar `soxr` ar installerat anvands det for resampling (~5 ms for 10 s ljud), annars faller appen tillbaka till `scipy.signal.resample_poly` (~50 ms). Flerkanaliga mikrofoner mixas till mono automatiskt (loudest-channel-val for USB-headsets med tyst kanal).
 
 ---
 
 ## Teknisk arkitektur
 
 ```
-freewispr-swedish/
-+-- main.py            # Entry point: systemfack, threading, applifecycle
-+-- transcriber.py     # KB-Whisper + CUDA + decoder-optimeringar + hotwords
-+-- dictation.py       # Dikteringslogik: tangent -> spela in -> transkribera -> klistra
-+-- audio.py           # Mikrofoninspelning (WASAPI prio, resample, enhetsval)
-+-- paste.py           # Urklipp via pyperclip + keyboard.send (modifier pre-release)
-+-- sounds.py          # Syntetiserade pop-ljud for inspelningsatergivning
-+-- ui.py              # Tkinter: flytande indikator, installningar, snippets, ordlista
-+-- config.py          # JSON konfiguration (~/.freewispr-swedish/config.json)
-+-- corrections.py     # Personliga ordrattningar (~/.freewispr-swedish/corrections.json)
-+-- snippets.py        # Textmallar/expansion (~/.freewispr-swedish/snippets.json)
-+-- convert_model.py   # CLI-verktyg for modellkonvertering (KBLab -> CTranslate2)
-+-- make_icon.py       # Genererar assets/icon.ico via Pillow
-+-- build.bat          # PyInstaller bygge (--onedir, CUDA, VAD-assets)
-+-- run.bat            # Dev-korning med beroendeinstallation
-+-- requirements.txt   # Python dependencies (torch installeras separat)
+freewispr-fast/
++-- main.py              # Entry point: systemfack, threading, applifecycle
++-- transcriber.py       # Backend-abstraktion: Parakeet/Whisper + hotwords + postprocessing
++-- parakeet_backend.py  # NVIDIA Parakeet NeMo-wrapper (nvidia/parakeet-tdt-0.6b-v3)
++-- dictation.py         # Dikteringslogik: tangent -> spela in -> transkribera -> klistra
++-- audio.py             # Mikrofoninspelning (WASAPI prio, soxr/scipy resample, pre-roll)
++-- text_inject.py       # Hybrid textinjektion (keyboard.write for kort, clipboard for lang)
++-- paste.py             # Aldre clipboard-paste (bakatkompatiblitet)
++-- sounds.py            # Syntetiserade pop-ljud for inspelningsatergivning
++-- ui.py                # Tkinter: flytande indikator, installningar, snippets, ordlista
++-- model_ui.py          # Modellnedladdning och -hantering (forstagangs-dialog, modellhanterare)
++-- privacy_ui.py        # Integritets-/datarensnings-UI
++-- config.py            # JSON konfiguration (~/.freewispr-swedish-parakeet/config.json)
++-- json_store.py        # Atomisk JSON-lagring (tempfil + replace) + JsonCache-klass
++-- corrections.py       # Personliga ordrattningar (via JsonCache)
++-- snippets.py          # Textmallar/expansion (via JsonCache)
++-- llm_polish.py        # Valfri LLM-granskning via GitHub Models/Azure
++-- auto_learn.py        # Lar fran LLM-diff till lokala korrektioner
++-- modifiers.py         # Kanonisk modifier-namngivning (ctrl/shift/alt/windows)
++-- convert_model.py     # CLI-verktyg for modellkonvertering (KBLab -> CTranslate2)
++-- make_icon.py         # Genererar assets/icon.ico via Pillow
++-- build.bat            # PyInstaller bygge (--onedir, CUDA, VAD-assets)
++-- run.bat              # Dev-korning med beroendeinstallation
++-- requirements.txt     # Python dependencies (torch/nemo installeras separat)
 ```
 
 ---
 
 ## Konfiguration
 
-Sparas i `~/.freewispr-swedish/config.json`:
+Sparas i `~/.freewispr-swedish-parakeet/config.json`:
 
 ```json
 {
   "hotkey": "ctrl+space",
   "model_size": "small",
   "use_cuda": true,
+  "backend": "auto",
   "mic_device": null
 }
 ```
@@ -217,9 +242,17 @@ Sparas i `~/.freewispr-swedish/config.json`:
 | `hotkey` | string | `"ctrl+space"` | Tangentkombination for diktering |
 | `model_size` | string | `"small"` | Whisper-modell: tiny/base/small/medium/large |
 | `use_cuda` | bool | `true` | Anvand GPU om tillganglig |
+| `backend` | string | `"auto"` | STT-backend: auto/parakeet/whisper |
 | `mic_device` | string/null | `null` | Mikrofonnamn, eller `null` for auto |
 | `llm_enabled` | bool | `false` | Skicka transkriberad text till LLM for granskning |
 | `llm_model` | string | `"gpt-4.1-nano"` | Modell for LLM-granskning |
+| `style` | string | `"casual"` | LLM-stilpreset: casual/formal/code/email/custom |
+| `custom_style_prompt` | string | `""` | Egen LLM-prompt (anvands nar style=custom) |
+| `paste_strategy` | string | `"auto"` | Inklistringsmetod: auto/clipboard/inject |
+| `paste_threshold` | int | `200` | Teckengrns for hybrid-paste (auto-lage) |
+| `min_rms` | float | `0.003` | Lagsta RMS-niva for tystnadsdetektion |
+| `preroll_enabled` | bool | `false` | Hall mikrofonen aktiv for snabbare start |
+| `preroll_seconds` | float | `0.5` | Langd pa pre-roll-buffert i sekunder |
 
 LLM API-nyckeln sparas i Windows Credential Manager via `keyring` och skrivs inte till `config.json`.
 
@@ -227,21 +260,22 @@ LLM API-nyckeln sparas i Windows Credential Manager via `keyring` och skrivs int
 
 | Fil | Beskrivning |
 |-----|-------------|
-| `~/.freewispr-swedish/corrections.json` | Personliga ordrattningar (wrong -> right) |
-| `~/.freewispr-swedish/snippets.json` | Snippets (trigger -> expansion) |
-| `~/.freewispr-swedish/hotwords.txt` | Egna termer for Whisper (valfri) |
-| `~/.freewispr-swedish/freewispr.log` | Logfil for felsokning |
-| `~/.freewispr-swedish/models/` | Nedladdade och konverterade modeller |
+| `~/.freewispr-swedish-parakeet/corrections.json` | Personliga ordrattningar (wrong -> right) |
+| `~/.freewispr-swedish-parakeet/snippets.json` | Snippets (trigger -> expansion) |
+| `~/.freewispr-swedish-parakeet/learned.json` | Auto-inlarda korrigeringar fran LLM-diff |
+| `~/.freewispr-swedish-parakeet/hotwords.txt` | Egna termer for Whisper (valfri) |
+| `~/.freewispr-swedish-parakeet/freewispr.log` | Logfil for felsokning |
+| `~/.freewispr-swedish-parakeet/models/` | Nedladdade och konverterade modeller |
 
 ---
 
-## Decoder-optimeringar
+## Decoder-optimeringar (Whisper-backend)
 
 Foljande Whisper-parametrar anvands for basta svenska transkribering:
 
 | Parameter | Varde | Effekt |
 |-----------|-------|--------|
-| `beam_size` | 5 | Standard beam search (battre an greedy) |
+| `beam_size` | 1 | Greedy decoding (snabbast for diktering) |
 | `repetition_penalty` | 1.1 | Mild straff pa upprepade tokens |
 | `no_repeat_ngram_size` | 3 | Forbjuder exakt upprepade 3-ordskombinationer |
 | `initial_prompt` | Svenska dikteringsprompt | Forankrar decodern i ratt sprak/stil |
@@ -270,6 +304,7 @@ git merge upstream/master
 
 ## Tack till
 
+- [NVIDIA NeMo](https://github.com/NVIDIA/NeMo) -- Parakeet ASR-modeller
 - [KBLab](https://huggingface.co/KBLab) -- Kungliga bibliotekets svenska Whisper-modeller
 - [faster-whisper](https://github.com/SYSTRAN/faster-whisper) -- effektiv Whisper-inferens via CTranslate2
 - [OpenAI Whisper](https://github.com/openai/whisper) -- den ursprungliga speech recognition-modellen

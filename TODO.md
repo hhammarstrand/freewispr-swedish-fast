@@ -70,7 +70,7 @@ Prioriterad förbättringslista baserad på repo-granskning 2026-05-20.
 
 ## Säkerhet och integritet
 
-- [ ] Dokumentera clipboard-baserad paste.
+- [x] Dokumentera clipboard-baserad paste.
   - Berör: `paste.py`, `README.md`.
   - Appen kopierar dikterad text till globala clipboarden och återställer efter paste.
   - Dokumentera risken och överväg alternativ/direct text injection där möjligt.
@@ -80,7 +80,7 @@ Prioriterad förbättringslista baserad på repo-granskning 2026-05-20.
   - I dag ignoreras restore-fel tyst.
   - Överväg retry, clear clipboard eller diskret användarvarning.
 
-- [ ] Dokumentera lokala datafiler och privacy cleanup.
+- [x] Dokumentera lokala datafiler och privacy cleanup.
   - Berör: `README.md`, `config.py`, `corrections.py`, `snippets.py`, `auto_learn.py`.
   - Lista `config.json`, `corrections.json`, `snippets.json`, `learned.json`, `hotwords.txt`, loggfil och modellcache.
   - Lägg gärna till UI-funktion för "Rensa privat data".
@@ -96,7 +96,7 @@ Prioriterad förbättringslista baserad på repo-granskning 2026-05-20.
   - Ersätt breda `>=` med låsta versioner eller skapa separat lockfil.
   - Pin även `torch` och `pyinstaller` i buildflödet.
 
-- [ ] Lägg till dependency/security scanning i CI.
+- [x] Lägg till dependency/security scanning i CI.
   - Exempel: pip-audit, safety eller GitHub Dependabot.
   - Kör även lint och tester i CI.
 
@@ -118,10 +118,10 @@ Prioriterad förbättringslista baserad på repo-granskning 2026-05-20.
 
 ## Dokumentation
 
-- [ ] Uppdatera `README.md` så den matchar aktuell funktionalitet.
+- [x] Uppdatera `README.md` så den matchar aktuell funktionalitet.
   - LLM-läge, privacy tradeoffs, clipboardbeteende, lokala datafiler och nätverkskontakt ska beskrivas tydligt.
 
-- [ ] Arkivera eller uppdatera `SPEC.md`.
+- [x] Arkivera eller uppdatera `SPEC.md`.
   - Dokumentet säger själv att flera detaljer är föråldrade.
   - Antingen flytta till historik/arkiv eller synka mot aktuell implementation.
 
@@ -148,7 +148,7 @@ Prioriterad förbättringslista baserad på repo-granskning 2026-05-20.
   - Default i faster-whisper är 2000 ms; 300 ms kapar legitima pauser och **tappar ord**.
   - Sätt ≥500 ms eller ta bort overriden helt.
 
-- [ ] Kör LLM polish i bakgrunden efter paste.
+- [x] Kör LLM polish i bakgrunden efter paste.
   - Berör: `transcriber.py:368`, `dictation.py:120-132`, `llm_polish.py:75`.
   - `polish()` körs synkront i dictation-tråden → blockerar paste upp till 8 s.
   - Paste lokalt resultat omedelbart, polera i bakgrunden, uppdatera clipboard/visa toast efteråt.
@@ -216,7 +216,7 @@ Prioriterad förbättringslista baserad på repo-granskning 2026-05-20.
   - Berör: `dictation.py:107`, `audio.py:169`.
   - Level beräknas redan per chunk i capture; återanvänd istället för full audio-pass efter resample.
 
-- [ ] Cacha polyphase-filter eller byt till `soxr` för resampling.
+- [x] Cacha polyphase-filter eller byt till `soxr` för resampling.
   - Berör: `audio.py:73-86`.
   - `resample_poly` rekomputerar FIR-filter varje anrop (~30-80 ms på 10s audio).
 
@@ -236,7 +236,7 @@ Prioriterad förbättringslista baserad på repo-granskning 2026-05-20.
   - Berör: `transcriber.py:357-358`, `_postprocess`.
   - Kör `_postprocess` en gång sist.
 
-- [ ] Använd `np.max(np.abs(audio))` utan extra kopia i log path.
+- [x] Använd `np.max(np.abs(audio))` utan extra kopia i log path.
   - Berör: `transcriber.py:204`.
 
 ### Snabba vinster
@@ -278,7 +278,7 @@ Prioriterad förbättringslista baserad på repo-granskning 2026-05-20.
   - Konstanten är nu härledd i en kommentar (noise floor + tal-RMS) och
     exponerad via `config["min_rms"]` (UI-widget ej tillagd ännu).
 
-- [ ] Extrahera `JsonCache`-helper.
+- [x] Extrahera `JsonCache`-helper.
   - Berör: `corrections.py`, `snippets.py`, `auto_learn.py`.
   - Tre kopior av load/save/cache-mönster.
 
