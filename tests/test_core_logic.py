@@ -881,3 +881,83 @@ def test_text_inject_restore_skips_when_newer_generation(monkeypatch):
 
     # Restore must not run because gen 1 is stale.
     assert restored == []
+
+# ---------- model_ui (PR 1.3) ---------- #
+
+def test_model_ui_model_is_local_uses_find_local_model(monkeypatch, tmp_path):
+    """model_is_local must mirror transcriber._find_local_model."""
+    # Stub the heavy imports model_ui pulls (convert_model imports transformers
+    # lazily; transcriber is safe but pulls faster_whisper). We reload with
+    # fake modules in sys.modules so model_ui sees our stubs.
+    import sys as _sys
+    fake_convert = SimpleNamespace(
+        KBLAB_MODELS={
+            "tiny": "KBLab/kb-whisper-tiny",
+            "small": "KBLab/kb-whisper-small",
+            "large": "KBLab/kb-whisper-large",
+        },
+        convert=lambda size: None,
+    )
+    fake_transcriber = SimpleNamespace(
+        MODEL_DIR=tmp_path / "models",
+        _find_local_model=lambda repo: "/fake/path" if repo == "KBLab/kb-whisper-small" else None,
+    )
+    monkeypatch.setitem(_sys.modules, "convert_model", fake_convert)
+    monkeypatch.setitem(_sys.modules, "transcriber", fake_transcriber)
+    if "model_ui" in _sys.modules:
+        del _sys.modules["model_ui"]
+    model_ui = importlib.import_module("model_ui")
+
+    assert model_ui.model_is_local("small") is True
+    assert model_ui.model_is_local("large") is False
+    assert model_ui.model_is_local("unknown-size") is False
+
+
+def test_model_ui_delete_local_model_removes_existing_dirs(monkeypatch, tmp_path):
+    import sys as _sys
+    models_dir = tmp_path / "models"
+    ct2 = models_dir / "kb-whisper-tiny-ct2"
+    hf = models_dir / "models--KBLab--kb-whisper-tiny"
+    ct2.mkdir(parents=True)
+    (ct2 / "model.bin").write_bytes(b"x")
+    hf.mkdir(parents=True)
+    (hf / "config.json").write_text("{}")
+
+    fake_convert = SimpleNamespace(
+        KBLAB_MODELS={"tiny": "KBLab/kb-whisper-tiny"},
+        convert=lambda size: None,
+    )
+    fake_transcriber = SimpleNamespace(
+        MODEL_DIR=models_dir,
+        _find_local_model=lambda repo: None,
+    )
+    monkeypatch.setitem(_sys.modules, "convert_model", fake_convert)
+    monkeypatch.setitem(_sys.modules, "transcriber", fake_transcriber)
+    if "model_ui" in _sys.modules:
+        del _sys.modules["model_ui"]
+    model_ui = importlib.import_module("model_ui")
+
+    removed = model_ui.delete_local_model("tiny")
+
+    assert removed is True
+    assert not ct2.exists()
+    assert not hf.exists()
+
+
+def test_model_ui_delete_local_model_returns_false_when_nothing_to_remove(monkeypatch, tmp_path):
+    import sys as _sys
+    fake_convert = SimpleNamespace(
+        KBLAB_MODELS={"tiny": "KBLab/kb-whisper-tiny"},
+        convert=lambda size: None,
+    )
+    fake_transcriber = SimpleNamespace(
+        MODEL_DIR=tmp_path / "missing",
+        _find_local_model=lambda repo: None,
+    )
+    monkeypatch.setitem(_sys.modules, "convert_model", fake_convert)
+    monkeypatch.setitem(_sys.modules, "transcriber", fake_transcriber)
+    if "model_ui" in _sys.modules:
+        del _sys.modules["model_ui"]
+    model_ui = importlib.import_module("model_ui")
+
+    assert model_ui.delete_local_model("tiny") is False

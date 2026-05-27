@@ -172,6 +172,27 @@ def _load_app():
     _config = cfg_module.load()
 
     model_size = _config.get("model_size", "small")
+
+    # First-run gate: if no model exists for the chosen size, prompt the
+    # user to download one before we try to instantiate the transcriber
+    # (which would otherwise raise a confusing 'modell saknas' error).
+    if not _any_model_present(model_size):
+        log.info("Ingen modell hittad — visar FirstRunDialog")
+        chosen = _prompt_first_run_modal()
+        if chosen is None:
+            log.info("Användaren avbröt first-run; avslutar")
+            _set_tray_status("Avbruten — avsluta från menyn")
+            return
+        if chosen != model_size:
+            # User picked a different size than what's in config. Persist
+            # so the next launch goes straight to _make_transcriber.
+            _config["model_size"] = chosen
+            try:
+                cfg_module.save(_config)
+            except Exception as e:
+                log.warning("Kunde inte spara model_size efter first-run: %s", e)
+            model_size = chosen
+
     _set_tray_status("Laddar modell...")
     try:
         _transcriber = _make_transcriber(model_size, _config.get("use_cuda", True))
@@ -194,6 +215,77 @@ def _load_app():
     _dictation = _make_dictation(_transcriber)
     _dictation.start()
     _set_tray_status(f"Klar — håll {_config.get('hotkey','ctrl+space').upper()} för att prata")
+
+
+def _any_model_present(preferred: str) -> bool:
+    """Quick disk check: is at least one Whisper model already on disk?
+
+    We prefer the size in config, but accept any size — the user may have
+    converted a different size before and we shouldn't re-prompt.
+    """
+    try:
+        from model_ui import model_is_local
+    except Exception:
+        # If model_ui can't import (e.g. transcriber import error), don't
+        # block startup — let _make_transcriber surface the real error.
+        return True
+    if model_is_local(preferred):
+        return True
+    return any(model_is_local(s) for s in ("tiny", "base", "small", "medium", "large"))
+
+
+def _prompt_first_run_modal() -> str | None:
+    """Show FirstRunDialog on the Tk thread, block until user picks/cancels.
+
+    Returns the chosen model size, or None if cancelled.
+    The dialog runs its own mainloop, so we drive it via tk_root.after
+    and wait on a threading.Event for the result.
+    """
+    result: dict[str, str | None] = {}
+    done = threading.Event()
+
+    def _show():
+        try:
+            from model_ui import FirstRunDialog
+            # Build a transient Toplevel-style flow: use a fresh Toplevel
+            # under _tk_root rather than a second Tk root (which would crash
+            # pystray's icon thread on shutdown).
+            dlg = FirstRunDialog.__new__(FirstRunDialog)
+            # Build manually so we attach to existing _tk_root instead of
+            # spawning a second mainloop.
+            from model_ui import _BaseModelWindow
+            _BaseModelWindow.__init__(dlg, parent=_tk_root,
+                                      title="freewispr-fast — välj modell",
+                                      size=(440, 320))
+            dlg._chosen = None
+            dlg._size_var = tk.StringVar(value=FirstRunDialog.DEFAULT_PICK)
+            dlg._status_var = tk.StringVar(value="")
+            dlg._busy = False
+            dlg._build()
+            dlg.win.transient(_tk_root)
+            dlg.win.grab_set()
+
+            def _on_close():
+                # Mirror the dialog's own _cancel logic but also signal done.
+                if dlg._busy:
+                    dlg._status_var.set("Vänta tills nedladdningen är klar innan du avbryter.")
+                    return
+                dlg._chosen = None
+                dlg.win.destroy()
+
+            dlg.win.protocol("WM_DELETE_WINDOW", _on_close)
+            dlg.win.bind("<Destroy>", lambda e, d=dlg: (
+                result.setdefault("size", d._chosen),
+                done.set(),
+            ) if e.widget is d.win else None)
+        except Exception as e:
+            log.error("Kunde inte visa FirstRunDialog: %s", e, exc_info=True)
+            result["size"] = None
+            done.set()
+
+    _tk_root.after(0, _show)
+    done.wait()
+    return result.get("size")
 
 # --------------------------------------------------------------------------- #
 #  Status helpers                                                              #
@@ -496,10 +588,22 @@ def _build_menu():
         pystray.MenuItem("Snippets", _open_snippets),
         pystray.MenuItem("Personlig ordlista", _open_dictionary),
         pystray.MenuItem("Inställningar", _open_settings),
+        pystray.MenuItem("Hantera modeller", _open_model_manager),
         pystray.MenuItem(startup_label, _toggle_startup),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(f"Avsluta {APP_DISPLAY_NAME}", _quit),
     )
+
+
+def _open_model_manager(_=None):
+    if _tk_root:
+        active = _config.get("model_size", "") if _config else ""
+        _tk_root.after(0, lambda: _show_model_manager(active))
+
+
+def _show_model_manager(active: str):
+    from model_ui import ModelManagerWindow
+    ModelManagerWindow(_tk_root, active_model=active)
 
 
 def _quit(_=None):
