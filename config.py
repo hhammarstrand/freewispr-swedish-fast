@@ -15,8 +15,9 @@ _KEYRING_USERNAME = "llm_api_key"
 
 DEFAULTS = {
     "hotkey": "ctrl+space",
-    "model_size": "small",     # tiny/base/small/medium/large
+    "model_size": "small",     # tiny/base/small/medium/large (whisper fallback size)
     "use_cuda": True,         # True = auto-detect GPU, False = force CPU
+    "backend": "auto",        # "auto" (parakeet if available, else whisper), "parakeet", "whisper"
     "mic_device": None,       # None = auto-detect, or device name string
     "llm_enabled": False,     # LLM post-processing of transcribed text
     "llm_api_key": "",        # Runtime only; saved in Windows Credential Manager when available

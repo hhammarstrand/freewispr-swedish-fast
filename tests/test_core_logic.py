@@ -9,9 +9,19 @@ import pytest
 
 def reload_with_home(module_name: str, tmp_path: Path):
     module = importlib.import_module(module_name)
-    module._FILE = tmp_path / f"{module_name}.json"
-    module._cache = None
-    module._cache_mtime = 0.0
+    new_path = tmp_path / f"{module_name}.json"
+    # Support both old-style (bare _FILE/_cache) and JsonCache-based modules.
+    if hasattr(module, "_store"):
+        module._store._path = new_path
+        module._store._cache = None
+        module._store._cache_mtime = 0.0
+    module._FILE = new_path
+    if hasattr(module, "_cache"):
+        module._cache = None
+        module._cache_mtime = 0.0
+    # Reset corrections apply cache when retargeting the file.
+    if hasattr(module, "_apply_cache_mtime"):
+        module._apply_cache_mtime = -1.0
     return module
 
 
@@ -989,7 +999,12 @@ def test_dictation_worker_does_not_paste_after_stop(monkeypatch):
 
     pasted = []
     mode = object.__new__(dictation.DictationMode)
-    mode.transcriber = SimpleNamespace(transcribe=lambda audio: "stale text")
+    mode.transcriber = SimpleNamespace(
+        transcribe=lambda audio: "stale text",
+        transcribe_local=lambda audio: "stale text",
+        llm_enabled=False,
+        llm_api_key="",
+    )
     mode._worker_stop = __import__("threading").Event()
     mode._worker_stop.set()
     mode._active = False
@@ -1035,6 +1050,8 @@ def test_transcriber_close_waits_for_inflight_transcribe(fake_transcriber_deps):
 
     inst = object.__new__(transcriber.Transcriber)
     inst.model_size = "small"
+    inst.backend_name = "whisper"
+    inst._parakeet = None
     inst.language = "sv"
     inst.llm_enabled = False
     inst.llm_api_key = ""

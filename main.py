@@ -90,15 +90,12 @@ _config_lock = threading.Lock()
 # --------------------------------------------------------------------------- #
 
 def _make_transcriber(model_size: str, use_cuda: bool):
-    """Build a Transcriber from current _config + the given overrides.
-
-    Kept in one place so _load_app, fallback, and reload paths cannot
-    drift apart in how they wire up LLM credentials.
-    """
+    """Build a Transcriber from current _config + the given overrides."""
     from transcriber import Transcriber
     return Transcriber(
         model_size=model_size,
         use_cuda=use_cuda,
+        backend=_config.get("backend", "auto"),
         llm_enabled=(
             _config.get("llm_enabled", False)
             and _config.get("llm_privacy_accepted", False)
@@ -365,6 +362,7 @@ def _apply_settings_locked(new_cfg: dict):
     old_config = dict(_config)  # shallow copy for rollback
     old_model = _config.get("model_size")
     old_cuda = _config.get("use_cuda")
+    old_backend = _config.get("backend", "auto")
     old_llm = (_config.get("llm_enabled"), _config.get("llm_api_key"),
                _config.get("llm_model"))
 
@@ -391,10 +389,11 @@ def _apply_settings_locked(new_cfg: dict):
 
     new_model = _config.get("model_size", "small")
     new_cuda = _config.get("use_cuda", True)
+    new_backend = _config.get("backend", "auto")
     new_llm = (_config.get("llm_enabled"), _config.get("llm_api_key"),
                _config.get("llm_model"))
 
-    model_changed = (old_model != new_model) or (old_cuda != new_cuda)
+    model_changed = (old_model != new_model) or (old_cuda != new_cuda) or (old_backend != new_backend)
     llm_changed = old_llm != new_llm
 
     # Fast path: LLM-only change. Mutate the existing transcriber in place
@@ -614,6 +613,7 @@ def _build_menu():
         pystray.MenuItem("Snippets", _open_snippets),
         pystray.MenuItem("Personlig ordlista", _open_dictionary),
         pystray.MenuItem("Inställningar", _open_settings),
+        pystray.MenuItem("Backend", _build_backend_submenu()),
         pystray.MenuItem("Stil", _build_style_submenu()),
         pystray.MenuItem(preroll_label, _toggle_preroll),
         pystray.MenuItem("Hantera modeller", _open_model_manager),
@@ -644,6 +644,33 @@ def _toggle_preroll(_=None):
                if new_value else "Pre-roll av")
         _indicator.show(msg, state="info")
         _indicator.hide(delay_ms=3000)
+    _rebuild_menu()
+
+
+_BACKEND_LABELS = [
+    ("auto", "Auto (Parakeet om GPU, annars Whisper)"),
+    ("parakeet", "Parakeet — snabb GPU (~150 ms)"),
+    ("whisper", "Whisper — lokal CPU/GPU"),
+]
+
+
+def _build_backend_submenu():
+    def _make_item(key: str, label: str):
+        def _on_click(_icon=None, _item=None, _k=key):
+            _set_backend(_k)
+        return pystray.MenuItem(
+            label,
+            _on_click,
+            checked=lambda item, _k=key: (_config.get("backend", "auto") if _config else "auto") == _k,
+            radio=True,
+        )
+    return pystray.Menu(*[_make_item(k, lbl) for k, lbl in _BACKEND_LABELS])
+
+
+def _set_backend(backend: str):
+    if not _config or backend == _config.get("backend"):
+        return
+    _apply_settings({"backend": backend})
     _rebuild_menu()
 
 

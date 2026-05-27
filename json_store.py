@@ -5,8 +5,55 @@ import shutil
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from time import strftime
+from typing import TypeVar
 
 log = logging.getLogger("freewispr")
+
+_D = TypeVar("_D", bound=dict)
+
+
+class JsonCache:
+    """Mtime-based cache for a single JSON file containing a dict.
+
+    Provides load() and save() with automatic in-memory caching:
+    the file is only re-read when its mtime changes. save() updates
+    the cache immediately so a subsequent load() is always consistent.
+
+    Usage::
+
+        _store = JsonCache(Path.home() / ".app" / "data.json")
+        data = _store.load()        # dict
+        _store.save({...})
+        ts = _store.mtime()         # float, 0.0 if missing
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._cache: dict | None = None
+        self._cache_mtime: float = 0.0
+
+    def mtime(self) -> float:
+        try:
+            return self._path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    def load(self) -> dict:
+        current_mt = self.mtime()
+        if self._cache is not None and current_mt == self._cache_mtime:
+            return self._cache
+        if self._path.exists():
+            self._cache = dict(load_json(self._path, {}))
+            self._cache_mtime = self.mtime()
+        else:
+            self._cache = {}
+            self._cache_mtime = current_mt
+        return self._cache
+
+    def save(self, data: dict) -> None:
+        save_json_atomic(self._path, data)
+        self._cache = data
+        self._cache_mtime = self.mtime()
 
 
 def load_json(path: Path, default):

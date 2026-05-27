@@ -5,6 +5,12 @@ import time as time_module
 
 import numpy as np
 import sounddevice as sd
+
+try:
+    import soxr as _soxr
+except ImportError:
+    _soxr = None
+
 from scipy.signal import resample_poly
 
 log = logging.getLogger("freewispr")
@@ -126,15 +132,16 @@ def _find_device_by_name(name: str) -> list[dict]:
 
 
 def _resample(audio: np.ndarray, orig_rate: int) -> np.ndarray:
-    """Resample audio from orig_rate to 16 kHz using polyphase filter.
+    """Resample audio from orig_rate to 16 kHz.
 
-    Uses scipy.signal.resample_poly which applies a proper anti-alias
-    FIR filter before decimation — critical for Whisper accuracy.
-    Linear interpolation causes aliasing artefacts that ruin transcription.
+    Uses soxr when available (much faster: ~5 ms vs ~50 ms for 10s audio at
+    44100 Hz). Falls back to scipy.signal.resample_poly which recomputes the
+    FIR filter on every call but is always available.
     """
     if orig_rate == TARGET_RATE:
         return audio
-    # Find the simplest up/down ratio
+    if _soxr is not None:
+        return _soxr.resample(audio, orig_rate, TARGET_RATE, quality="HQ").astype(np.float32)
     g = math.gcd(TARGET_RATE, orig_rate)
     up = TARGET_RATE // g
     down = orig_rate // g

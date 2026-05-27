@@ -11,5 +11,12 @@ pystray>=0.19.5,<0.20
 Pillow>=10.0.0,<13.0
 keyring>=25.0.0,<26.0
 
+# Snabbare resampling (~5 ms vs ~50 ms per klipp). Valfritt — faller tillbaka
+# till scipy.signal.resample_poly om soxr saknas.
+soxr>=0.3.7,<1.0
+
 # GPU/CUDA-stod (valfritt, stor nedladdning ~2.5GB):
 # pip install torch --index-url https://download.pytorch.org/whl/cu124
+
+# Parakeet-backend (valfritt, kräver GPU, ~6GB nedladdning):
+# pip install nemo_toolkit[asr]

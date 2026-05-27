@@ -18,17 +18,18 @@ Splitta ui.py i moduler, extrahera JsonCache-helper, uppdatera README och SPEC.m
 ## Arkitektur
 
 - **main.py** — Entry point: systemfält, threading, app-livscykel
-- **transcriber.py** — KB-Whisper + CUDA + decoder-optimeringar + hotwords
-- **dictation.py** — Dikteringslogik: tangent → spela in → transkribera → klistra
-- **audio.py** — Mikrofoninspelning (WASAPI-prio, resample, enhetsval)
+- **transcriber.py** — Backend-abstraherad STT (Parakeet / Whisper), corrections, postprocess
+- **parakeet_backend.py** — NVIDIA Parakeet NeMo-wrapper (valfri, GPU-only)
+- **dictation.py** — Dikteringslogik: tangent → spela in → transkribera → klistra (async LLM-polish)
+- **audio.py** — Mikrofoninspelning (WASAPI-prio, soxr/scipy-resample, enhetsval)
 - **paste.py** — Urklipp + keyboard.send (modifier pre-release)
 - **ui.py** — Tkinter: flytande indikator, inställningar, snippets, ordlista
 - **config.py** — JSON-konfiguration (`~/.freewispr-swedish-parakeet/config.json`)
-- **corrections.py** — Personliga ordrättningar
-- **snippets.py** — Textmallar/expansion
+- **corrections.py** — Personliga ordrättningar (via JsonCache)
+- **snippets.py** — Textmallar/expansion (via JsonCache)
 - **llm_polish.py** — Valfri LLM-granskning av transkriberad text
 - **auto_learn.py** — Lär från LLM-diff till lokala korrektioner
-- **json_store.py** — Atomisk JSON-lagring (tempfil + replace)
+- **json_store.py** — Atomisk JSON-lagring (tempfil + replace) + JsonCache-klass
 
 ## Kommandon
 

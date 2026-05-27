@@ -6,48 +6,22 @@ import re
 from pathlib import Path
 
 from config import APP_NAME
-from json_store import load_json, save_json_atomic
+from json_store import JsonCache
 
-_FILE = Path.home() / f".{APP_NAME}" / "corrections.json"
-
-# In-memory cache — avoids re-reading JSON on every transcription.
-_cache: dict[str, str] | None = None
-_cache_mtime: float = 0.0
+_store = JsonCache(Path.home() / f".{APP_NAME}" / "corrections.json")
+_FILE = _store._path  # exposed for tests that reference corrections._FILE
 
 
 def mtime() -> float:
-    """Return mtime of the corrections file (0.0 if missing).
-
-    Exposed so callers (e.g. hotwords cache in transcriber) can detect
-    changes without poking the private `_FILE` constant.
-    """
-    try:
-        return _FILE.stat().st_mtime
-    except OSError:
-        return 0.0
+    return _store.mtime()
 
 
 def load() -> dict[str, str]:
-    """Load corrections, using in-memory cache when file hasn't changed."""
-    global _cache, _cache_mtime
-    current_mt = _FILE.stat().st_mtime if _FILE.exists() else 0.0
-    if _cache is not None and current_mt == _cache_mtime:
-        return _cache
-    if _FILE.exists():
-        _cache = dict(load_json(_FILE, {}))
-        _cache_mtime = _FILE.stat().st_mtime if _FILE.exists() else 0.0
-        return _cache
-    _cache = {}
-    _cache_mtime = current_mt
-    return _cache
+    return _store.load()
 
 
 def save(corrections: dict[str, str]):
-    global _cache, _cache_mtime
-    save_json_atomic(_FILE, corrections)
-    # Invalidate cache so next load() picks up the new data
-    _cache = corrections
-    _cache_mtime = _FILE.stat().st_mtime
+    _store.save(corrections)
 
 
 # Compiled-pattern cache for apply(). A *single* alternation regex with a
@@ -96,7 +70,7 @@ def apply(text: str) -> str:
     """Replace all correction pairs (case-insensitive match, case-mirrored replacement)."""
     global _apply_master, _apply_lookup, _apply_cache_mtime
     corr = load()
-    current_mt = _cache_mtime
+    current_mt = _store._cache_mtime
     if current_mt != _apply_cache_mtime:
         _apply_master, _apply_lookup = _build_apply_cache(corr)
         _apply_cache_mtime = current_mt

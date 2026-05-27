@@ -310,6 +310,7 @@ def _get_hotwords_cached() -> str | None:
 class Transcriber:
     def __init__(self, model_size: str = "small", language: str = "sv",
                  use_cuda: bool = True,
+                 backend: str = "auto",
                  llm_enabled: bool = False, llm_api_key: str = "",
                  llm_model: str = "gpt-4.1-nano",
                  style: str = "casual",
@@ -321,14 +322,40 @@ class Transcriber:
         self.llm_model = llm_model
         self.style = style
         self.custom_style_prompt = custom_style_prompt
+        self._model_lock = threading.RLock()
+        self._parakeet = None
+        self.model = None
 
-        # Get the KBLab model name
+        # Try Parakeet first when backend is "auto" or "parakeet" and CUDA is available.
+        if backend in ("auto", "parakeet"):
+            try:
+                from parakeet_backend import ParakeetBackend
+                from parakeet_backend import is_available as _pk_avail
+                if _pk_avail():
+                    log.info("Parakeet tillgänglig — laddar Parakeet-backend...")
+                    self._parakeet = ParakeetBackend("cuda")
+                    self.model_size = "parakeet"
+                    self.backend_name = "parakeet"
+                    if self.llm_enabled and self.llm_api_key:
+                        log.info("LLM-granskning aktiverad: %s", self.llm_model)
+                    return  # ParakeetBackend starts its own warmup thread
+                elif backend == "parakeet":
+                    raise RuntimeError(
+                        "Parakeet begärd men NeMo är inte installerat eller CUDA saknas.\n"
+                        "Installera: pip install nemo_toolkit[asr]"
+                    )
+            except ImportError:
+                if backend == "parakeet":
+                    raise
+                log.debug("parakeet_backend inte tillgänglig, faller tillbaka till Whisper")
+            except Exception as e:
+                if backend == "parakeet":
+                    raise
+                log.warning("Parakeet-initiering misslyckades (%s), faller tillbaka till Whisper", e)
+
+        # Whisper path
         model_name = KBLAB_MODELS.get(model_size, model_size)
-
-        # Use local snapshot if already downloaded — avoids network check
         model_path = _find_local_model(model_name)
-
-        # Determine device and compute type
         device, compute_type, cuda_used = _get_device_and_compute(use_cuda)
 
         # Fail-closed when the model isn't cached locally: faster-whisper would
@@ -345,12 +372,11 @@ class Transcriber:
             )
 
         log.info("Laddar Whisper '%s' från lokal cache (%s)...", model_size, device)
-
         if cuda_used:
             log.info("GPU: NVIDIA CUDA aktiverad")
 
         self.model_size = model_size
-        self._model_lock = threading.RLock()
+        self.backend_name = "whisper"
         self.model = WhisperModel(
             model_path,
             device=device,
@@ -363,10 +389,6 @@ class Transcriber:
             log.info("LLM-granskning aktiverad: %s", self.llm_model)
 
         # Warm up CTranslate2 kernels / CUDA workspaces on a background thread.
-        # faster-whisper allocates these lazily on the first real transcribe()
-        # call, which adds 300-800 ms to the user's first hotkey press.
-        # Running a silent inference here eats that cost while the tray is
-        # still loading.
         self._warmed = False
         threading.Thread(target=self._warmup, name="whisper-warmup",
                          daemon=True).start()
@@ -400,11 +422,12 @@ class Transcriber:
             log.debug("Whisper-warmup misslyckades (ignoreras): %s", e)
 
     def close(self) -> None:
-        """Release the underlying WhisperModel to free VRAM/RAM.
-
-        Important on model reload: keeping two WhisperModels alive briefly
-        can pin 2-3 GB of VRAM and OOM smaller CUDA devices.
-        """
+        """Release backend model(s) to free VRAM/RAM."""
+        parakeet = getattr(self, "_parakeet", None)
+        if parakeet is not None:
+            self._parakeet = None
+            parakeet.close()
+            return
         import gc
         try:
             with self._model_lock:
@@ -423,44 +446,29 @@ class Transcriber:
         except Exception as e:
             log.debug("Kunde inte frigora modell rent: %s", e)
 
-    def transcribe(self, audio: np.ndarray) -> str:
-        log.info("Transkriberar: %d samples, peak=%.4f, modell=%s, lang=%s",
-                 len(audio), float(np.max(np.abs(audio))) if audio.size else 0.0,
-                 self.model_size, self.language)
-
+    def _transcribe_raw_whisper(self, audio: np.ndarray) -> str:
+        """Raw Whisper inference — returns concatenated segment text."""
         prompt = _INITIAL_PROMPTS.get(self.language, "")
         hotwords = _get_hotwords_cached()
-
         raw = ""
-        # Try with VAD first, fall back to without on error.
-        # segments is a lazy generator, so the error surfaces during
-        # iteration, not at the transcribe() call itself.
         for use_vad in (True, False):
             try:
                 with self._model_lock:
                     model = self.model
                     if model is None:
                         raise RuntimeError("Whisper-modellen är stängd")
-                    segments, info = model.transcribe(
+                    segments, _info = model.transcribe(
                         audio,
                         language=self.language,
-                        # Greedy decoding (beam_size=1) — ~2× faster than beam_size=5
-                        # with negligible WER difference on short dictation utterances.
                         beam_size=1,
                         best_of=1,
                         vad_filter=use_vad,
-                        # 500 ms keeps legitimate natural pauses intact;
-                        # 300 ms was cutting words off.
                         vad_parameters={"min_silence_duration_ms": 500} if use_vad else None,
                         initial_prompt=prompt or None,
                         condition_on_previous_text=False,
                         without_timestamps=True,
-                        # Decoder optimizations — zero latency cost:
-                        # Mild penalty on repeated tokens (prevents "det det det")
                         repetition_penalty=1.1,
-                        # Forbid repeating 3-word sequences exactly
                         no_repeat_ngram_size=3,
-                        # Bias toward user's vocabulary (names, terms)
                         hotwords=hotwords,
                     )
                     raw = " ".join(s.text.strip() for s in segments)
@@ -470,14 +478,29 @@ class Transcriber:
                     log.warning("VAD-transkribering kraschade: %s — försöker utan VAD", e)
                     continue
                 raise
+        return raw
+
+    def transcribe_local(self, audio: np.ndarray) -> str:
+        """Transcribe using the active backend, apply corrections and post-processing."""
+        peak = max(float(audio.max()), -float(audio.min())) if audio.size else 0.0
+        log.info("Transkriberar: %d samples, peak=%.4f, backend=%s",
+                 len(audio), peak, self.backend_name)
+
+        if self._parakeet is not None:
+            raw = self._parakeet.transcribe_raw(audio)
+        else:
+            raw = self._transcribe_raw_whisper(audio)
 
         log.info("Rå text mottagen (%s)", _text_meta(raw))
-        # Strip noise/placeholder tokens. _postprocess handles whitespace
-        # collapsing further down — no need to do it twice.
         text = _NOISE_PLACEHOLDERS.sub("", raw)
         text = corr_module.apply(text)
         text = _postprocess(text)
         log.info("Resultat (lokal) klart (%s)", _text_meta(text))
+        return text
+
+    def transcribe(self, audio: np.ndarray) -> str:
+        """Transcribe audio and apply LLM polish synchronously (backward compat)."""
+        text = self.transcribe_local(audio)
 
         # LLM polishing — optional, never blocks on failure
         if self.llm_enabled and self.llm_api_key and text:

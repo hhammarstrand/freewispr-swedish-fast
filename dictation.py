@@ -262,7 +262,9 @@ class DictationMode:
                 log.info("Hoppar över stale transkribering efter stopp")
                 return
             log.info("Transkriberar %d samples...", len(audio))
-            text = self.transcriber.transcribe(audio)
+            # Use local-only transcription so the result is pasted immediately;
+            # LLM polish runs asynchronously in the background if enabled.
+            text = self.transcriber.transcribe_local(audio)
             # Apply snippet expansion — if full text is a trigger, replace it
             text = snippet_module.expand(text)
             log.info("Resultat klart (%s)", _text_meta(text))
@@ -280,6 +282,17 @@ class DictationMode:
                 if self.indicator:
                     self.indicator.show("Klistrad", state="done")
                     self.indicator.hide(delay_ms=1800)
+                # Launch async LLM polish if enabled
+                if (self.transcriber.llm_enabled
+                        and self.transcriber.llm_api_key
+                        and text.strip()):
+                    t = threading.Thread(
+                        target=self._polish_async,
+                        args=(text,),
+                        daemon=True,
+                        name="llm-polish",
+                    )
+                    t.start()
             else:
                 self.on_status(f"Inget hördes — håll {self.hotkey.upper()}")
                 if self.indicator:
@@ -299,3 +312,47 @@ class DictationMode:
                 pretty = f"{err_label}: {err_msg}" if err_msg else err_label
                 self.indicator.show(f"Fel: {pretty}", state="error")
                 self.indicator.hide(delay_ms=5000)
+
+    def _polish_async(self, local_text: str):
+        """Run LLM polish in the background after local text has been pasted.
+
+        If the polished result differs from the local text, the polished version
+        is copied to the clipboard and a toast indicator is shown so the user
+        can paste it manually.  Any exception is logged but never propagated —
+        LLM polish must never crash the dictation loop.
+        """
+        try:
+            if self._worker_stop.is_set():
+                log.info("LLM-polish avbrutet: app stängs ned")
+                return
+
+            import pyperclip
+
+            from auto_learn import record_correction
+            from llm_polish import polish
+
+            tr = self.transcriber
+            result = polish(
+                local_text,
+                tr.llm_api_key,
+                tr.llm_model,
+                style=tr.style,
+                custom_prompt=tr.custom_style_prompt,
+            )
+
+            if self._worker_stop.is_set():
+                log.info("LLM-polish avbrutet efter svar: app stängs ned")
+                return
+
+            if result.changed:
+                record_correction(local_text, result.text)
+                pyperclip.copy(result.text)
+                log.info("Resultat (LLM) klart (%dms, %s)",
+                         result.latency_ms, _text_meta(result.text))
+                if self.indicator:
+                    self.indicator.show("LLM klart — i urklipp", state="done")
+                    self.indicator.hide(delay_ms=3000)
+            else:
+                log.info("LLM-polish: ingen ändring (%dms)", result.latency_ms)
+        except Exception as e:
+            log.error("LLM-polish misslyckades: %s", e, exc_info=True)
