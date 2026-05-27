@@ -1,15 +1,16 @@
 import logging
 import queue
 import threading
+
 import keyboard
 import numpy as np
 
-from audio import MicRecorder, finalize_audio
-from transcriber import Transcriber
-from text_inject import inject as inject_text
-from modifiers import normalize_all, is_modifier
 import snippets as snippet_module
 import sounds
+from audio import MicRecorder, finalize_audio
+from modifiers import is_modifier, normalize_all
+from text_inject import inject as inject_text
+from transcriber import Transcriber
 
 log = logging.getLogger("freewispr")
 

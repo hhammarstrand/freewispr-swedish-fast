@@ -1,6 +1,7 @@
-import math
 import logging
+import math
 import time as time_module
+
 import numpy as np
 import sounddevice as sd
 from scipy.signal import resample_poly

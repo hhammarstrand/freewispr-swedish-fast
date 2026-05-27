@@ -25,8 +25,8 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 import corrections as corr_module
-from json_store import load_json, save_json_atomic
 from config import APP_NAME
+from json_store import load_json, save_json_atomic
 
 log = logging.getLogger("freewispr")
 

@@ -1,10 +1,10 @@
-import time
+import ctypes
 import logging
 import threading
-import ctypes
+import time
 
-import pyperclip
 import keyboard
+import pyperclip
 
 from modifiers import CANONICAL_MODIFIERS, normalize_all
 

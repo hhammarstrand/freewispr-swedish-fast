@@ -21,7 +21,6 @@ import logging
 import shutil
 import threading
 import tkinter as tk
-from pathlib import Path
 from tkinter import messagebox, ttk
 
 import convert_model

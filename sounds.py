@@ -4,8 +4,9 @@ Uses numpy + wave + winsound (all available: numpy from whisper, rest stdlib).
 Sounds are generated once at import and cached as in-memory WAV bytes.
 """
 import io
-import wave
 import logging
+import wave
+
 import numpy as np
 
 log = logging.getLogger("freewispr")
@@ -38,7 +39,6 @@ def _generate_pop(freq_start: float, freq_end: float,
         volume: Peak amplitude (0.0 - 1.0).
     """
     n = int(SAMPLE_RATE * duration_ms / 1000)
-    t = np.linspace(0, duration_ms / 1000, n, dtype=np.float32)
 
     # Frequency sweep (linear)
     freq = np.linspace(freq_start, freq_end, n)

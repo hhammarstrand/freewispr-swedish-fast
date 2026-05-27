@@ -11,8 +11,8 @@ import json
 import logging
 import os
 import subprocess
-import urllib.request
 import urllib.error
+import urllib.request
 from typing import NamedTuple
 
 log = logging.getLogger("freewispr")

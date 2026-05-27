@@ -5,16 +5,16 @@ Tkinter-based windows for freewispr-swedish.
 - DictionaryWindow  : manage word corrections (Whisper mistakes)
 - SettingsWindow    : hotkey, model, mic, GPU toggle
 """
-import tkinter as tk
-from tkinter import ttk, messagebox
 import math
 import random
 import threading
 import time as time_module
+import tkinter as tk
+from tkinter import messagebox, ttk
 
-import snippets as snippet_module
-import corrections as corr_module
 import config as cfg_module
+import corrections as corr_module
+import snippets as snippet_module
 
 # llm_polish is imported lazily inside SettingsWindow methods.
 # Pulling it in at module import time forces openai + httpx (~80 ms cold)

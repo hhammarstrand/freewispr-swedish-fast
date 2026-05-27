@@ -1,6 +1,8 @@
 """Generate icon.ico for the freewispr .exe build."""
-from PIL import Image, ImageDraw
 import os
+
+from PIL import Image, ImageDraw
+
 
 def make_icon(size=256):
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))

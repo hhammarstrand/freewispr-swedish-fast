@@ -2,8 +2,8 @@
 freewispr-fast — Svensk speech-to-text för Windows (Parakeet/streaming experimental fork)
 Entry point: system tray icon + dictation mode.
 """
-import sys
 import logging
+import sys
 from pathlib import Path
 
 # --------------------------------------------------------------------------- #
@@ -19,6 +19,7 @@ logging.basicConfig(
 log = logging.getLogger("freewispr")
 
 import config as cfg_module  # noqa: E402  (need APP_NAME before logging dir)
+
 APP_NAME = cfg_module.APP_NAME
 APP_DISPLAY_NAME = "freewispr-fast"
 
@@ -48,13 +49,13 @@ try:
     import threading
     import tkinter as tk
 
-    from PIL import Image, ImageDraw
     import pystray
+    from PIL import Image, ImageDraw
 
     # cfg_module is imported above (need APP_NAME for log dir).
     # Heavy modules (torch, faster_whisper, scipy) are imported lazily
     # inside _load_app() so the tray icon appears in <1 second.
-    from ui import SettingsWindow, SnippetsWindow, DictionaryWindow, FloatingIndicator, _style
+    from ui import DictionaryWindow, FloatingIndicator, SettingsWindow, SnippetsWindow, _style
     log.info("Snabb-imports OK")
 except Exception:
     log.critical("Import kraschade", exc_info=True)
@@ -108,7 +109,7 @@ def _make_transcriber(model_size: str, use_cuda: bool):
 
 
 def _make_dictation(transcriber):
-    from dictation import DictationMode, DEFAULT_MIN_RMS
+    from dictation import DEFAULT_MIN_RMS, DictationMode
     return DictationMode(
         transcriber,
         hotkey=_config.get("hotkey", "ctrl+space"),

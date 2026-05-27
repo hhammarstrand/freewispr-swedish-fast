@@ -4,8 +4,8 @@ Stored at ~/.{APP_NAME}/snippets.json as {"trigger": "expansion", ...}
 """
 from pathlib import Path
 
-from json_store import load_json, save_json_atomic
 from config import APP_NAME
+from json_store import load_json, save_json_atomic
 
 _FILE = Path.home() / f".{APP_NAME}" / "snippets.json"
 

@@ -688,8 +688,9 @@ def test_dictation_worker_does_not_paste_after_stop(monkeypatch):
 
 
 def test_transcriber_close_waits_for_inflight_transcribe(fake_transcriber_deps):
-    import numpy as np
     import threading
+
+    import numpy as np
     sys.modules["torch"] = SimpleNamespace(
         cuda=SimpleNamespace(is_available=lambda: False, empty_cache=lambda: None)
     )

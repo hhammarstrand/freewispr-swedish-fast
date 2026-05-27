@@ -1,7 +1,8 @@
-import re
 import logging
+import re
 import threading
 from pathlib import Path
+
 import numpy as np
 from faster_whisper import WhisperModel
 
@@ -81,7 +82,7 @@ def _patch_vocabulary(snapshot_dir: Path) -> None:
     if marker.exists():
         return  # already patched in a previous run
     try:
-        with open(vocab_path, "r", encoding="utf-8") as f:
+        with open(vocab_path, encoding="utf-8") as f:
             vocab = json.load(f)
         if isinstance(vocab, list) and len(vocab) > 51865:
             log.warning(
@@ -221,7 +222,7 @@ def _get_device_and_compute(use_cuda: bool) -> tuple:
     Returns (device, compute_type, cuda_used).
     """
     cuda_available = _check_cuda()
-    
+
     if use_cuda and cuda_available:
         return ("cuda", "float16", True)
     elif use_cuda and not cuda_available:
@@ -316,10 +317,10 @@ class Transcriber:
         self.llm_enabled = llm_enabled
         self.llm_api_key = llm_api_key
         self.llm_model = llm_model
-        
+
         # Get the KBLab model name
         model_name = KBLAB_MODELS.get(model_size, model_size)
-        
+
         # Use local snapshot if already downloaded — avoids network check
         model_path = _find_local_model(model_name)
 
@@ -476,8 +477,8 @@ class Transcriber:
 
         # LLM polishing — optional, never blocks on failure
         if self.llm_enabled and self.llm_api_key and text:
-            from llm_polish import polish
             from auto_learn import record_correction
+            from llm_polish import polish
 
             result = polish(text, self.llm_api_key, self.llm_model)
             if result.changed:

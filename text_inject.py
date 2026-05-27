@@ -35,13 +35,12 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Callable
 
 import keyboard
 import pyperclip
 
 from modifiers import CANONICAL_MODIFIERS, normalize_all
-from paste import _active_window_class, _paste_shortcut
+from paste import _paste_shortcut
 
 log = logging.getLogger("freewispr")
 

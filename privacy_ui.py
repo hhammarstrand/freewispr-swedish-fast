@@ -169,7 +169,7 @@ class PrivacyWindow:
 
             btn = ttk.Button(
                 row, text="Rensa", style="Danger.TButton",
-                command=lambda p=path, l=label: self._on_wipe(l, p),
+                command=lambda p=path, lbl=label: self._on_wipe(lbl, p),
             )
             btn.pack(side="right", anchor="n")
 
