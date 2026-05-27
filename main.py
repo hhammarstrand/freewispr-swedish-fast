@@ -217,7 +217,27 @@ def _load_app():
 
     _dictation = _make_dictation(_transcriber)
     _dictation.start()
+    _apply_preroll_from_config()
     _set_tray_status(f"Klar — håll {_config.get('hotkey','ctrl+space').upper()} för att prata")
+
+
+def _apply_preroll_from_config():
+    """Arm or disarm the recorder pre-roll based on current config.
+
+    Safe to call repeatedly — enable_preroll/disable_preroll are
+    idempotent. Errors are logged but do not block dictation.
+    """
+    if not (_dictation and _config):
+        return
+    enabled = bool(_config.get("preroll_enabled", False))
+    seconds = float(_config.get("preroll_seconds", 0.5))
+    try:
+        if enabled:
+            _dictation.recorder.enable_preroll(seconds)
+        else:
+            _dictation.recorder.disable_preroll()
+    except Exception as e:
+        log.error("Kunde inte applicera pre-roll-installningen: %s", e)
 
 
 def _any_model_present(preferred: str) -> bool:
@@ -676,6 +696,10 @@ def _show_privacy():
 
 def _quit(_=None):
     if _dictation:
+        try:
+            _dictation.recorder.disable_preroll()
+        except Exception:
+            pass
         _dictation.stop()
     if _tray_icon:
         _tray_icon.stop()

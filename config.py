@@ -35,6 +35,12 @@ DEFAULTS = {
     # base system prompt instead of a built-in preset.
     "style": "casual",
     "custom_style_prompt": "",
+    # Pre-roll: keep a ~500 ms rolling buffer of mic input always armed so
+    # the first ~half second of speech after pressing the hotkey isn't
+    # clipped. Opt-in: when ON, the mic LED stays lit whenever the app is
+    # running. Off by default for privacy.
+    "preroll_enabled": False,
+    "preroll_seconds": 0.5,
 }
 
 

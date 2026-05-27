@@ -179,6 +179,23 @@ class MicRecorder:
         # joining, PortAudio can race and the second start() either errors out
         # or grabs a stale device handle. The thread itself is daemon.
         self._pending_close: threading.Thread | None = None
+        # ---- Pre-roll ring buffer (PR 2.9a) ------------------------------- #
+        # When enabled, the audio callback also writes every chunk into a
+        # short rolling buffer (~500 ms). At hotkey-press time, the most
+        # recent N samples are copied into the head of self._buffer and
+        # recording continues seamlessly — start-of-utterance consonants
+        # that used to be clipped now make it through.
+        #
+        # The ring lives on the recorder so it survives across multiple
+        # start()/stop_fast_async() cycles; only enable_preroll() /
+        # disable_preroll() change its lifetime.
+        self._preroll_enabled = False
+        self._preroll_seconds = 0.5
+        self._preroll_ring: np.ndarray | None = None
+        self._preroll_capacity = 0  # samples-per-channel
+        self._preroll_offset = 0    # next write index into ring
+        self._preroll_full = False  # has the ring wrapped at least once
+        self._preroll_channels = 1
         # Optional callback fired from the audio thread with the latest RMS
         # level (float). Used by the UI to drive the equalizer without a
         # polling timer. Must be cheap + thread-safe; the indicator throttles
@@ -257,6 +274,162 @@ class MicRecorder:
             self._buffer_capacity = capacity
             self._buffer_channels = channels
 
+    # ---- Pre-roll (PR 2.9a) ---------------------------------------------- #
+
+    def _ensure_preroll_ring(self, rate: int, channels: int, seconds: float) -> None:
+        """(Re-)allocate the pre-roll ring buffer for the current shape.
+
+        Sizing: seconds * rate samples per channel. Re-allocates and
+        clears state when shape or duration changes.
+        """
+        capacity = max(1, int(seconds * rate))
+        if (self._preroll_ring is None
+                or self._preroll_capacity != capacity
+                or self._preroll_channels != channels):
+            if channels > 1:
+                self._preroll_ring = np.zeros((capacity, channels), dtype=np.float32)
+            else:
+                self._preroll_ring = np.zeros(capacity, dtype=np.float32)
+            self._preroll_capacity = capacity
+            self._preroll_channels = channels
+            self._preroll_offset = 0
+            self._preroll_full = False
+
+    def _write_preroll(self, indata: np.ndarray, n: int) -> None:
+        """Wrap-around write of the latest callback chunk into the ring.
+
+        Called from the audio thread. Must be cheap and allocation-free.
+        """
+        if self._preroll_ring is None or self._preroll_capacity <= 0:
+            return
+        # Match shape: ring is 1-D for mono, 2-D for multi-channel.
+        if self._preroll_channels > 1:
+            chunk = indata[:n]
+        else:
+            chunk = indata[:n].ravel() if indata.ndim > 1 else indata[:n]
+        cap = self._preroll_capacity
+        off = self._preroll_offset
+        end = off + n
+        if end <= cap:
+            self._preroll_ring[off:end] = chunk
+        else:
+            # Wrap: write tail, then head.
+            first = cap - off
+            self._preroll_ring[off:cap] = chunk[:first]
+            self._preroll_ring[0:n - first] = chunk[first:]
+            self._preroll_full = True
+        self._preroll_offset = (off + n) % cap
+        if self._preroll_offset == 0 and n > 0:
+            self._preroll_full = True
+
+    def _drain_preroll(self) -> np.ndarray:
+        """Return the ring contents in chronological order (oldest first).
+
+        Returns an empty array if pre-roll has never received audio.
+        Does NOT clear the ring; the caller (start_with_preroll) just
+        copies into the main buffer.
+        """
+        if self._preroll_ring is None or self._preroll_capacity == 0:
+            return np.empty(0, dtype=np.float32)
+        off = self._preroll_offset
+        if not self._preroll_full:
+            # Only the [0:off] portion has been written so far.
+            if off == 0:
+                return np.empty(0, dtype=np.float32)
+            return self._preroll_ring[:off].copy()
+        # Ring has wrapped — chronological order is [off:] then [:off].
+        return np.concatenate([self._preroll_ring[off:], self._preroll_ring[:off]])
+
+    def enable_preroll(self, seconds: float = 0.5) -> None:
+        """Arm the pre-roll ring buffer and start the underlying stream.
+
+        Idempotent — calling while already enabled is a cheap no-op (only
+        re-allocates the ring if seconds changed). The mic LED will stay
+        lit for as long as pre-roll is on.
+        """
+        self._preroll_enabled = True
+        self._preroll_seconds = max(0.05, float(seconds))
+        # Determine the rate/channels we'll actually use. If a stream is
+        # already running (recording), match its shape; otherwise pick the
+        # first valid candidate and start a passive listening stream.
+        if self._stream is not None:
+            rate = getattr(self, "_rate", TARGET_RATE)
+            channels = self._buffer_channels
+            self._ensure_preroll_ring(rate, channels, self._preroll_seconds)
+            return
+        # Spin up a passive stream just for pre-roll.
+        candidates = self._build_candidates()
+        last_err: Exception | None = None
+        for dev_idx, rate, ch, label in candidates:
+            try:
+                self._ensure_preroll_ring(rate, ch, self._preroll_seconds)
+                self._preroll_channels = ch
+                self._buffer_channels = ch  # so a later start() picks same shape
+                self._stream = _try_start(dev_idx, rate, ch, self._cb)
+                self._rate = rate
+                log.info("Pre-roll aktiverad: %s (dev=%d, %dHz, %dch, %.0f ms)",
+                         label, dev_idx, rate, ch, self._preroll_seconds * 1000)
+                return
+            except Exception as e:
+                last_err = e
+        self._preroll_enabled = False
+        raise last_err or RuntimeError("Ingen mikrofon kunde oppnas for pre-roll")
+
+    def disable_preroll(self) -> None:
+        """Stop the passive listening stream and release the ring."""
+        was_recording = self.recording
+        self._preroll_enabled = False
+        self._preroll_ring = None
+        self._preroll_capacity = 0
+        self._preroll_offset = 0
+        self._preroll_full = False
+        # If we're not actively recording, tear down the passive stream
+        # so the mic LED turns off.
+        if not was_recording and self._stream is not None:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+        log.info("Pre-roll inaktiverad")
+
+    def start_with_preroll(self) -> None:
+        """Start an active recording, seeded with the latest pre-roll audio.
+
+        When pre-roll is not enabled or has no captured samples yet,
+        behaves exactly like :py:meth:`start`.
+        """
+        if not self._preroll_enabled or self._stream is None:
+            self.start()
+            return
+        # Pre-roll path: reuse the already-open stream, just flip state
+        # and seed self._buffer with the ring contents.
+        self.level = 0.0
+        self._sumsq = 0.0
+        self._sumsq_count = 0
+        self._buffer_overflow = False
+        rate = getattr(self, "_rate", TARGET_RATE)
+        self._ensure_buffer(rate, self._preroll_channels)
+        ring = self._drain_preroll()
+        n = ring.shape[0]
+        if n > 0 and self._buffer is not None:
+            if self._buffer_channels > 1:
+                # Ring already has the (n, ch) shape.
+                self._buffer[:n] = ring
+            else:
+                self._buffer[:n] = ring
+            self._buffer_offset = n
+            # Seed the RMS accumulators so .rms() reflects pre-roll too.
+            flat = ring.ravel() if ring.ndim > 1 else ring
+            self._sumsq = float(np.dot(flat, flat))
+            self._sumsq_count = flat.size
+        else:
+            self._buffer_offset = 0
+        # Order matters: recording=True AFTER seeding so the callback
+        # cannot append to _buffer mid-seed.
+        self.recording = True
+
     def _build_candidates(self) -> list[tuple[int, int, int, str]]:
         """Build ordered list of (device_idx, rate, channels, label) to try."""
         candidates = []
@@ -311,10 +484,16 @@ class MicRecorder:
             if now - self._last_status_log > 5.0:
                 log.warning("Audio callback-status: %s", status)
                 self._last_status_log = now
-        if not self.recording or self._buffer is None:
-            return
         n = indata.shape[0]
         if n <= 0:
+            return
+
+        # Always update the pre-roll ring if enabled, even when we are not
+        # actively recording — that is the entire point.
+        if self._preroll_enabled and self._preroll_ring is not None:
+            self._write_preroll(indata, n)
+
+        if not self.recording or self._buffer is None:
             return
         remaining = self._buffer_capacity - self._buffer_offset
         if remaining <= 0:
@@ -403,16 +582,27 @@ class MicRecorder:
 
         Falls back to a synchronous tear-down when no stream is active or
         if spawning the helper thread fails.
+
+        When pre-roll is enabled, the stream is kept open (it has to keep
+        feeding the ring), and only the ``recording`` flag is cleared —
+        the audio is still snapshotted and returned synchronously.
         """
         self.recording = False
         rate = getattr(self, "_rate", TARGET_RATE)
-        stream = self._stream
-        self._stream = None
 
         if self._buffer is None or self._buffer_offset == 0:
             captured: np.ndarray = np.empty(0, dtype=np.float32)
         else:
             captured = self._buffer[:self._buffer_offset].copy()
+
+        if self._preroll_enabled and self._stream is not None:
+            # Keep the stream alive — pre-roll needs it. Reset the buffer
+            # offset so the next start_with_preroll() seeds cleanly.
+            self._buffer_offset = 0
+            return captured, self._buffer_channels, rate
+
+        stream = self._stream
+        self._stream = None
 
         if stream is None:
             return captured, self._buffer_channels, rate

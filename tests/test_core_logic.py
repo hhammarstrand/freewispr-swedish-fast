@@ -596,6 +596,150 @@ def test_stop_fast_async_no_stream_does_not_spawn_thread():
     assert recorder._pending_close is None
 
 
+# --------------------------------------------------------------------------- #
+#  Pre-roll ring buffer (PR 2.9a)                                              #
+# --------------------------------------------------------------------------- #
+
+def test_preroll_ring_writes_and_wraps():
+    import numpy as np
+
+    audio = importlib.import_module("audio")
+    recorder = audio.MicRecorder()
+    recorder._ensure_preroll_ring(rate=10, channels=1, seconds=1.0)  # cap=10
+
+    # Write 7 samples — fits without wrapping.
+    chunk1 = np.array([1, 2, 3, 4, 5, 6, 7], dtype=np.float32)
+    recorder._write_preroll(chunk1, 7)
+    assert recorder._preroll_offset == 7
+    assert recorder._preroll_full is False
+    assert recorder._drain_preroll().tolist() == [1, 2, 3, 4, 5, 6, 7]
+
+    # Write 5 more — wraps to start, ring becomes full.
+    chunk2 = np.array([8, 9, 10, 11, 12], dtype=np.float32)
+    recorder._write_preroll(chunk2, 5)
+    assert recorder._preroll_full is True
+    assert recorder._preroll_offset == 2  # (7 + 5) % 10
+    # Chronological order: oldest first → 3,4,5,6,7,8,9,10,11,12
+    assert recorder._drain_preroll().tolist() == [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+
+
+def test_preroll_drain_empty_when_no_writes():
+    audio = importlib.import_module("audio")
+    recorder = audio.MicRecorder()
+    recorder._ensure_preroll_ring(rate=10, channels=1, seconds=0.5)
+    assert recorder._drain_preroll().size == 0
+
+
+def test_start_with_preroll_seeds_main_buffer():
+    """When pre-roll has data and a stream is open, start_with_preroll()
+    must copy the ring contents into self._buffer before recording starts."""
+    import numpy as np
+
+    audio = importlib.import_module("audio")
+    recorder = audio.MicRecorder()
+
+    # Arm pre-roll manually (skip enable_preroll which opens a real stream).
+    recorder._preroll_enabled = True
+    recorder._ensure_preroll_ring(rate=audio.TARGET_RATE, channels=1, seconds=0.5)
+    recorder._rate = audio.TARGET_RATE
+
+    # Fake an already-open stream so start_with_preroll takes the fast path.
+    class FakeStream:
+        def stop(self): pass
+        def close(self): pass
+    recorder._stream = FakeStream()
+
+    # Populate the ring with 4 samples.
+    recorder._write_preroll(np.array([0.1, 0.2, 0.3, 0.4], dtype=np.float32), 4)
+
+    recorder.start_with_preroll()
+
+    assert recorder.recording is True
+    assert recorder._buffer_offset == 4
+    assert recorder._buffer is not None
+    assert recorder._buffer[:4].tolist() == [pytest.approx(x) for x in [0.1, 0.2, 0.3, 0.4]]
+
+
+def test_start_with_preroll_falls_back_to_start_when_disabled(monkeypatch):
+    audio = importlib.import_module("audio")
+    recorder = audio.MicRecorder()
+    recorder._preroll_enabled = False
+
+    called = {"start": False}
+    monkeypatch.setattr(recorder, "start", lambda: called.__setitem__("start", True))
+    recorder.start_with_preroll()
+    assert called["start"] is True
+
+
+def test_stop_fast_async_keeps_stream_open_when_preroll_enabled():
+    import numpy as np
+
+    audio = importlib.import_module("audio")
+    recorder = audio.MicRecorder()
+    recorder._preroll_enabled = True
+    recorder._ensure_preroll_ring(rate=audio.TARGET_RATE, channels=1, seconds=0.5)
+    recorder._ensure_buffer(audio.TARGET_RATE, 1)
+    recorder._buffer_offset = 3
+    recorder._buffer[:3] = np.array([0.5, 0.5, 0.5], dtype=np.float32)
+    recorder._rate = audio.TARGET_RATE
+
+    stop_calls = []
+
+    class GuardedStream:
+        def stop(self): stop_calls.append("stop")
+        def close(self): stop_calls.append("close")
+
+    recorder._stream = GuardedStream()
+    recorder.recording = True
+
+    captured, _ch, _rate = recorder.stop_fast_async()
+
+    # Audio still snapshotted
+    assert captured.tolist() == [pytest.approx(0.5)] * 3
+    # Stream NOT torn down (pre-roll needs it)
+    assert recorder._stream is not None
+    assert stop_calls == []
+    # Buffer offset reset so next start_with_preroll seeds cleanly
+    assert recorder._buffer_offset == 0
+    assert recorder.recording is False
+
+
+def test_disable_preroll_clears_ring_state():
+    audio = importlib.import_module("audio")
+    recorder = audio.MicRecorder()
+    recorder._preroll_enabled = True
+    recorder._ensure_preroll_ring(rate=audio.TARGET_RATE, channels=1, seconds=0.5)
+
+    recorder.disable_preroll()
+    assert recorder._preroll_enabled is False
+    assert recorder._preroll_ring is None
+    assert recorder._preroll_capacity == 0
+
+
+def test_preroll_config_defaults():
+    config = importlib.import_module("config")
+    assert config.DEFAULTS["preroll_enabled"] is False
+    assert config.DEFAULTS["preroll_seconds"] == 0.5
+
+
+def test_cb_writes_to_preroll_even_when_not_recording():
+    """The whole point of pre-roll: capture audio BEFORE recording=True."""
+    import numpy as np
+
+    audio = importlib.import_module("audio")
+    recorder = audio.MicRecorder()
+    recorder._preroll_enabled = True
+    recorder._ensure_preroll_ring(rate=audio.TARGET_RATE, channels=1, seconds=0.5)
+    recorder.recording = False  # explicitly NOT recording
+    recorder._buffer = None
+
+    indata = np.array([[0.7], [0.7], [0.7]], dtype=np.float32)
+    recorder._cb(indata, len(indata), None, None)
+
+    assert recorder._preroll_offset == 3
+    assert recorder._drain_preroll().tolist() == [pytest.approx(0.7)] * 3
+
+
 def test_corrections_apply_master_regex_handles_many_entries(tmp_path):
     """Master-regex path must apply all corrections in a single pass."""
     corrections = reload_with_home("corrections", tmp_path)

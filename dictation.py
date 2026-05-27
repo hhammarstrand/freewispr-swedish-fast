@@ -159,7 +159,7 @@ class DictationMode:
                     self.recorder.on_level = self.indicator.push_level
                 else:
                     self.recorder.on_level = None
-                self.recorder.start()
+                self.recorder.start_with_preroll()
                 sounds.play_start()
                 self.on_status("Lyssnar…")
                 if self.indicator:
