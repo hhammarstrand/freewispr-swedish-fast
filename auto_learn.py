@@ -112,17 +112,39 @@ def record_correction(before: str, after: str) -> None:
 
         if entry:
             entry["count"] = entry.get("count", 0) + 1
-            # Update correct form (use latest — LLM may improve capitalization)
-            entry["correct"] = correct
+            # Track every variant the LLM has suggested so the most-voted
+            # one wins promotion. Previously the latest variant clobbered
+            # the field, so a single noisy LLM reply could derail learning.
+            variants = entry.setdefault("variants", {})
+            # Backfill: if the entry was written by an older version that
+            # only stored "correct", seed the variant tally with the past
+            # count so we don't lose history on upgrade.
+            if "correct" in entry and entry["correct"] not in variants:
+                variants[entry["correct"]] = max(
+                    variants.get(entry["correct"], 0),
+                    entry["count"] - 1,
+                )
+            variants[correct] = variants.get(correct, 0) + 1
+            # Winner = variant with most votes (deterministic tie-break by
+            # alphabetical order to keep tests reproducible).
+            winner = max(sorted(variants.keys()), key=lambda v: variants[v])
+            entry["correct"] = winner
         else:
-            entry = {"correct": correct, "count": 1, "promoted": False}
+            entry = {
+                "correct": correct,
+                "count": 1,
+                "promoted": False,
+                "variants": {correct: 1},
+            }
             learned[wrong] = entry
 
         recorded.append((wrong, entry["count"]))
 
-        # Promote if threshold reached
+        # Promote if threshold reached. Use the majority-vote winner so a
+        # single off-by-one capitalization mistake can't sneak into the
+        # personal dictionary.
         if entry["count"] >= PROMOTE_THRESHOLD and not entry["promoted"]:
-            _promote(wrong, correct)
+            _promote(wrong, entry["correct"])
             entry["promoted"] = True
             promoted_any = True
 

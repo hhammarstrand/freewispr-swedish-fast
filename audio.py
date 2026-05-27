@@ -343,13 +343,12 @@ class MicRecorder:
         return float(np.sqrt(self._sumsq / self._sumsq_count))
 
     def stop_fast(self) -> tuple[np.ndarray, int, int]:
-        """Stop the stream cheaply and hand back the captured audio view.
+        """Stop the stream cheaply and hand back the captured audio.
 
-        Returns ``(audio_view, channels, rate)``. ``audio_view`` is a *view*
-        into the pre-allocated ring buffer — the worker must use it before
-        the next ``start()`` call (which may overwrite the buffer in place).
-        For dictation that's always safe because start/stop alternate with
-        the worker thread consuming each buffer in order.
+        Returns ``(audio_copy, channels, rate)``. ``audio_copy`` is a
+        contiguous *copy* of the recorded samples (worst case ~23 MB at
+        120 s @ 48 kHz mono) so the worker thread can safely process it
+        while a new recording starts overwriting the ring buffer in place.
 
         Keeps the keyboard-hook thread responsive (Windows can disable a
         low-level hook that blocks > ~300 ms).

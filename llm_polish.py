@@ -127,8 +127,16 @@ def polish(text: str, api_key: str, model: str = DEFAULT_MODEL) -> PolishResult:
         latency = int((time.perf_counter() - t0) * 1000)
 
         # Safety: if LLM returns something wildly different length-wise,
-        # it probably hallucinated — use original
-        if len(result) > len(text) * 3 or len(result) < len(text) * 0.3:
+        # it probably hallucinated — use original.
+        #
+        # Length floor: 30 % of the original IS too strict on short
+        # utterances ("Klockan ringer" -> "Ringer." is a legitimate
+        # 3->1 word polish). Allow shrink down to either 30 % of
+        # the original OR an absolute floor of 20 chars, whichever
+        # is more permissive.
+        too_long = len(result) > len(text) * 3
+        too_short = len(result) < len(text) * 0.3 and len(result) < 20
+        if too_long or too_short:
             log.warning("LLM-svar avviker for mycket i langd (%d vs %d), "
                         "anvander original", len(result), len(text))
             return PolishResult(text=text, model=model, latency_ms=latency,

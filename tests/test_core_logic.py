@@ -36,9 +36,21 @@ def test_corrections_apply_case_insensitive_whole_words(tmp_path):
     corrections = reload_with_home("corrections", tmp_path)
     corrections.save({"motte": "möte"})
 
+    # Capitalized source ("Motte") mirrors to capitalized replacement ("Möte"),
+    # lowercase source stays lowercase. Inside-word substring "motteplats"
+    # is left alone — word-boundary regex.
     result = corrections.apply("Motte idag, men motteplats ska vara kvar")
 
-    assert result == "möte idag, men motteplats ska vara kvar"
+    assert result == "Möte idag, men motteplats ska vara kvar"
+
+
+def test_corrections_apply_mirrors_all_caps(tmp_path):
+    corrections = reload_with_home("corrections", tmp_path)
+    corrections.save({"vinternote": "vintermöte"})
+
+    result = corrections.apply("VINTERNOTE i morgon")
+
+    assert result == "VINTERMÖTE i morgon"
 
 
 def test_snippets_expand_exact_trigger_only(tmp_path):
@@ -47,6 +59,24 @@ def test_snippets_expand_exact_trigger_only(tmp_path):
 
     assert snippets.expand(" MVB ") == "Med vänliga hälsningar"
     assert snippets.expand("mvb tack") == "mvb tack"
+
+
+def test_snippets_expand_strips_whisper_punctuation(tmp_path):
+    snippets = reload_with_home("snippets", tmp_path)
+    snippets.save({"mvb": "Med vänliga hälsningar"})
+
+    # Whisper often appends a period or question mark to short utterances —
+    # the snippet must still trigger.
+    assert snippets.expand("MVB.") == "Med vänliga hälsningar"
+    assert snippets.expand("mvb?") == "Med vänliga hälsningar"
+    assert snippets.expand("Mvb!") == "Med vänliga hälsningar"
+    assert snippets.expand("mvb…") == "Med vänliga hälsningar"
+
+
+def test_snippets_expand_empty_lib_is_noop(tmp_path):
+    snippets = reload_with_home("snippets", tmp_path)
+
+    assert snippets.expand("hej") == "hej"
 
 
 def test_auto_learn_extracts_same_length_word_diffs():
@@ -58,6 +88,78 @@ def test_auto_learn_extracts_same_length_word_diffs():
     )
 
     assert diffs == [("gar", "går"), ("motte", "möte")]
+
+
+def test_auto_learn_majority_vote_wins_promotion(tmp_path, monkeypatch):
+    """A single noisy LLM variant must not derail the dictionary."""
+    auto_learn = importlib.reload(importlib.import_module("auto_learn"))
+    monkeypatch.setattr(auto_learn, "LEARNED_FILE", tmp_path / "learned.json")
+    monkeypatch.setattr(auto_learn, "PROMOTE_THRESHOLD", 3)
+
+    promotions: list[tuple[str, str]] = []
+    monkeypatch.setattr(auto_learn, "_promote",
+                        lambda w, c: promotions.append((w, c)))
+
+    # Three rounds: "möte" wins 2-1 over a one-time noisy "mode".
+    auto_learn.record_correction("Jag gar till motte", "Jag går till möte")
+    auto_learn.record_correction("Jag gar till motte", "Jag går till mode")
+    auto_learn.record_correction("Jag gar till motte", "Jag går till möte")
+
+    # "motte" must have promoted as the majority-vote winner.
+    assert ("motte", "möte") in promotions
+    learned = json.loads((tmp_path / "learned.json").read_text(encoding="utf-8"))
+    assert learned["motte"]["correct"] == "möte"
+    assert learned["motte"]["variants"] == {"möte": 2, "mode": 1}
+
+
+def test_llm_polish_length_guard_allows_short_legitimate_polish(monkeypatch):
+    """The old length guard rejected any polish < 30 % of input length,
+    which threw away legitimate short polish on long input. The new guard
+    only triggers when the result is BOTH < 30 % AND < 20 chars."""
+    llm_polish = importlib.import_module("llm_polish")
+
+    monkeypatch.setattr(llm_polish, "resolve_api_key", lambda k="": "fake")
+
+    def fake_call(api_key, model, user_text, timeout_sec=8.0):
+        # Simulate an LLM that returned a 22-char polish for a 100-char input.
+        # That's 22 % — old guard would reject; new guard keeps it because
+        # 22 chars is over the 20-char absolute floor.
+        return {"choices": [{"message": {"content": "Det blir bra ändå idag."}}]}
+
+    monkeypatch.setattr(llm_polish, "_call_api", fake_call)
+
+    long_input = "öh så här liksom alltså jag tror egentligen att vi typ inte ska göra detta för det blir nog jättekonstigt"
+    result = llm_polish.polish(long_input, "fake")
+
+    # 23 chars < 30 % of 109 (=32.7) — old guard would have BLOCKED and
+    # returned the original. New guard allows it.
+    assert result.changed is True
+    assert result.text == "Det blir bra ändå idag."
+
+
+def test_llm_polish_length_guard_still_blocks_obvious_hallucinations(monkeypatch):
+    """A 3-char polish on a 50-char input is still suspicious — keep it blocked."""
+    llm_polish = importlib.import_module("llm_polish")
+
+    monkeypatch.setattr(llm_polish, "resolve_api_key", lambda k="": "fake")
+    monkeypatch.setattr(
+        llm_polish, "_call_api",
+        lambda *a, **k: {"choices": [{"message": {"content": "Ja."}}]},
+    )
+
+    long_input = "Detta är en mycket längre mening som inte borde bli till två tecken någonsin"
+    result = llm_polish.polish(long_input, "fake")
+
+    # 3 chars < 30 % of 76 AND 3 < 20 -> blocked, original returned.
+    assert result.changed is False
+    assert result.text == long_input
+
+
+def test_corrections_apply_preserves_unmatched_text(tmp_path):
+    corrections = reload_with_home("corrections", tmp_path)
+    corrections.save({})
+
+    assert corrections.apply("hej alla glada") == "hej alla glada"
 
 
 def test_config_save_uses_keyring_and_excludes_secret(tmp_path, monkeypatch):

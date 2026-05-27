@@ -459,16 +459,27 @@ def _enable_startup():
 
 def _toggle_startup(_=None):
     import winreg
-    key = _open_run_key(write=True)
     try:
-        if _is_startup_enabled():
-            winreg.DeleteValue(key, _RUN_VALUE)
-            _set_tray_status("Borttagen från uppstart")
-        else:
-            winreg.SetValueEx(key, _RUN_VALUE, 0, winreg.REG_SZ, _startup_exe_path())
-            _set_tray_status("Startar med Windows ✓")
-    finally:
-        winreg.CloseKey(key)
+        key = _open_run_key(write=True)
+        try:
+            if _is_startup_enabled():
+                winreg.DeleteValue(key, _RUN_VALUE)
+                _set_tray_status("Borttagen från uppstart")
+            else:
+                winreg.SetValueEx(key, _RUN_VALUE, 0, winreg.REG_SZ, _startup_exe_path())
+                _set_tray_status("Startar med Windows ✓")
+        finally:
+            winreg.CloseKey(key)
+    except OSError as e:
+        # Locked-down corporate machines, anti-virus quarantine, or
+        # group-policy restrictions can deny HKCU\\...\\Run access.
+        # Surface the failure in the tray instead of crashing the app.
+        log.error("Kunde inte uppdatera autostart: %s", e)
+        _set_tray_status("Fel: kunde inte uppdatera autostart")
+        if _indicator:
+            _indicator.show("Kunde inte uppdatera autostart", state="error")
+            _indicator.hide(delay_ms=4000)
+        return
     _rebuild_menu()
 
 

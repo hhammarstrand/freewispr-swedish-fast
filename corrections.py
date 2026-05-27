@@ -70,8 +70,30 @@ def _build_apply_cache(corr: dict[str, str]) -> tuple[re.Pattern[str] | None, di
     return pattern, lookup
 
 
+def _mirror_case(source: str, replacement: str) -> str:
+    """Adopt the case pattern of `source` into `replacement`.
+
+    Rules:
+      - source is ALL UPPERCASE -> uppercase replacement
+      - source starts with uppercase letter -> capitalize replacement
+      - otherwise -> leave replacement as stored
+
+    Avoids the surprise of dictating "MÖTE" and getting "möte" pasted
+    because the dictionary entry was stored lowercase.
+    """
+    if not source or not replacement:
+        return replacement
+    # All-caps detection ignores any non-letter chars so e.g. "USA:S" still triggers.
+    letters = [c for c in source if c.isalpha()]
+    if letters and all(c.isupper() for c in letters):
+        return replacement.upper()
+    if source[:1].isupper():
+        return replacement[:1].upper() + replacement[1:]
+    return replacement
+
+
 def apply(text: str) -> str:
-    """Replace all correction pairs (case-insensitive match, exact replacement)."""
+    """Replace all correction pairs (case-insensitive match, case-mirrored replacement)."""
     global _apply_master, _apply_lookup, _apply_cache_mtime
     corr = load()
     current_mt = _cache_mtime
@@ -80,4 +102,10 @@ def apply(text: str) -> str:
         _apply_cache_mtime = current_mt
     if _apply_master is None:
         return text
-    return _apply_master.sub(lambda m: _apply_lookup[m.group(0).lower()], text)
+
+    def _sub(m: re.Match[str]) -> str:
+        matched = m.group(0)
+        replacement = _apply_lookup[matched.lower()]
+        return _mirror_case(matched, replacement)
+
+    return _apply_master.sub(_sub, text)

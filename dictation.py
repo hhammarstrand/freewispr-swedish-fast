@@ -276,5 +276,13 @@ class DictationMode:
             log.error("Transkribering misslyckades: %s", e, exc_info=True)
             self.on_status(f"Fel — håll {self.hotkey.upper()}")
             if self.indicator:
-                self.indicator.show(f"Fel: {e}", state="error")
+                # Long stack-trace strings push the indicator off-screen and
+                # leak internal paths to the user. Show only the first line
+                # of the first message, with a sane upper bound.
+                err_label = type(e).__name__
+                err_msg = str(e).splitlines()[0] if str(e) else ""
+                if len(err_msg) > 80:
+                    err_msg = err_msg[:77] + "..."
+                pretty = f"{err_label}: {err_msg}" if err_msg else err_label
+                self.indicator.show(f"Fel: {pretty}", state="error")
                 self.indicator.hide(delay_ms=5000)

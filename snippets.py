@@ -38,9 +38,16 @@ def save(snippets: dict[str, str]):
 
 def expand(text: str) -> str:
     """
-    If the full transcribed text (stripped, lowercase) exactly matches
-    a snippet trigger, return the expansion. Otherwise return text unchanged.
+    If the full transcribed text (stripped, lowercased, punctuation removed)
+    exactly matches a snippet trigger, return the expansion. Otherwise
+    return text unchanged.
+
+    Whisper often appends `.` / `?` / `!` to short utterances; stripping
+    them before lookup means "hälsning." still triggers a "hälsning"
+    snippet.
     """
     snips = load()
-    key = text.strip().lower()
+    if not snips:
+        return text
+    key = text.strip().lower().rstrip(".,!?:;…")
     return snips.get(key, text)

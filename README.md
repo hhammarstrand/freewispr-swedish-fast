@@ -184,7 +184,7 @@ freewispr-swedish/
 +-- transcriber.py     # KB-Whisper + CUDA + decoder-optimeringar + hotwords
 +-- dictation.py       # Dikteringslogik: tangent -> spela in -> transkribera -> klistra
 +-- audio.py           # Mikrofoninspelning (WASAPI prio, resample, enhetsval)
-+-- paste.py           # Urklipp via pyperclip + pyautogui (modifier pre-release)
++-- paste.py           # Urklipp via pyperclip + keyboard.send (modifier pre-release)
 +-- sounds.py          # Syntetiserade pop-ljud for inspelningsatergivning
 +-- ui.py              # Tkinter: flytande indikator, installningar, snippets, ordlista
 +-- config.py          # JSON konfiguration (~/.freewispr-swedish/config.json)
