@@ -5,15 +5,17 @@ Compares `nvidia/parakeet-tdt-0.6b-v3` against `faster-whisper-small` and
 
 ## Methodology
 
-- **Data:** First N validated clips from CV 17.0 `sv-SE` test split, resampled
-  to 16k mono WAV.
+- **Data:** First N clips from Google FLEURS `sv_se` test split, read directly
+  from HF cache as embedded FLAC bytes (bypasses torchcodec/FFmpeg requirement
+  on Windows). We tried Common Voice 17.0 first but it is gated and requires
+  HF auth.
 - **Warm-up:** Each model transcribes clip 0 once before timed runs (excludes
   CUDA init, JIT compile, weight-load-to-GPU costs).
 - **Latency:** Wall-clock `time.perf_counter()` around the inference call only
   (no audio I/O, no model loading).
-- **WER:** Computed via `jiwer.wer(refs, hyps)` on raw text (no normalization
-  applied — this is intentionally conservative; both backends will lose
-  equally on casing and punctuation).
+- **WER:** Computed via `jiwer.wer` after normalizing with
+  `whisper_normalizer.BasicTextNormalizer` (lowercase, strip punctuation).
+  Mirrors how OpenAI / NeMo report numbers in papers.
 - **RTF:** Real-time factor = total inference time / total audio duration.
   Lower is better; <1.0 means faster-than-realtime.
 
@@ -42,6 +44,8 @@ Parakeet wins if **either**:
 - RTF is materially lower (<0.5x) at comparable WER
 
 Otherwise we keep faster-whisper and pivot VÅG 3 toward UX polish.
+
+See `bench/BENCH.md` for the actual go/no-go decision and numbers.
 
 ## Results
 

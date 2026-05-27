@@ -26,6 +26,19 @@ from pathlib import Path
 import soundfile as sf
 from datasets import load_dataset
 from jiwer import wer
+from whisper_normalizer.basic import BasicTextNormalizer
+
+_NORMALIZER = BasicTextNormalizer()
+
+
+def _normalize(text: str) -> str:
+    """Strip case, punctuation, extra whitespace before WER.
+
+    Mirrors what OpenAI / NeMo report in published WER numbers. Without this,
+    'Hello, world.' vs 'hello world' counts as 100% WER which is misleading
+    for ASR comparisons.
+    """
+    return _NORMALIZER(text).strip()
 
 
 @dataclass
@@ -44,7 +57,7 @@ class Result:
     audio_durations_s: list[float] = field(default_factory=list)
 
     def wer(self, refs: list[str]) -> float:
-        return wer(refs, self.hypotheses)
+        return wer([_normalize(r) for r in refs], [_normalize(h) for h in self.hypotheses])
 
     def latency_mean(self) -> float:
         return statistics.mean(self.latencies_s)
@@ -65,15 +78,28 @@ class Result:
 # --------------------------------------------------------------------------- #
 
 def load_swedish_samples(n: int, cache_dir: Path) -> list[Sample]:
-    """Load first N validated Swedish clips from Common Voice 17.0."""
-    print(f"[data] Loading Common Voice 17.0 Swedish (n={n}) ...")
+    """Load first N Swedish clips from Google FLEURS (sv_se).
+
+    FLEURS is open (no HF auth required), CC-BY-4.0, ~3h per language with
+    professional readers. Test split has ~700 clips averaging ~10s.
+
+    We avoid HF's audio-decoder entirely (it requires torchcodec + FFmpeg DLLs
+    on Windows) by loading the dataset without decoding and reading raw WAVs
+    from the local cache with soundfile.
+    """
+    import numpy as np
+    from datasets import Audio
+
+    print(f"[data] Loading google/fleurs sv_se (n={n}) ...")
     ds = load_dataset(
-        "mozilla-foundation/common_voice_17_0",
-        "sv-SE",
+        "google/fleurs",
+        "sv_se",
         split="test",
         cache_dir=str(cache_dir),
-        trust_remote_code=False,
     )
+    # Disable HF's audio decoder — we'll read paths manually.
+    ds = ds.cast_column("audio", Audio(decode=False))
+
     samples: list[Sample] = []
     audio_dir = cache_dir / "wavs"
     audio_dir.mkdir(parents=True, exist_ok=True)
@@ -81,15 +107,18 @@ def load_swedish_samples(n: int, cache_dir: Path) -> list[Sample]:
     for i, row in enumerate(ds):
         if len(samples) >= n:
             break
-        audio = row["audio"]  # {'array': np.ndarray, 'sampling_rate': int, 'path': str}
-        ref = row["sentence"].strip()
+        ref = (row.get("transcription") or row.get("raw_transcription") or "").strip()
         if not ref:
             continue
-        # Resample to 16k mono and save as WAV (both models expect 16k).
-        arr = audio["array"]
-        sr = audio["sampling_rate"]
+        src_bytes = row["audio"]["bytes"]
+        if not src_bytes:
+            print(f"  [skip] missing audio bytes for row {i}")
+            continue
+        import io
+        arr, sr = sf.read(io.BytesIO(src_bytes), dtype="float32", always_2d=False)
+        if arr.ndim == 2:
+            arr = arr.mean(axis=1)
         if sr != 16000:
-            import numpy as np
             from scipy.signal import resample_poly
             arr = resample_poly(arr, 16000, sr).astype(np.float32)
             sr = 16000
@@ -165,6 +194,7 @@ def bench_whisper(samples: list[Sample], model_size: str, device: str) -> Result
 def print_report(refs: list[str], results: list[Result]) -> str:
     lines = []
     lines.append("\n" + "=" * 78)
+    lines.append("WER computed on normalized text (BasicTextNormalizer: lowercase, no punct)")
     lines.append(f"{'model':<32}{'device':<8}{'WER':>8}{'mean ms':>10}{'p95 ms':>10}{'RTF':>8}")
     lines.append("-" * 78)
     for r in results:
