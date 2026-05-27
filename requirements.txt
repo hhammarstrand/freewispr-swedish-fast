@@ -1,7 +1,7 @@
 # Upper bounds protect against breaking changes in major releases.
 # Most critically numpy<2 — faster-whisper / ctranslate2 wheels are
 # still numpy-1 ABI; numpy 2 silently breaks them at runtime.
-faster-whisper>=1.0.3,<2.0
+faster-whisper>=1.2.1,<2.0
 sounddevice>=0.4.6,<0.6
 numpy>=1.24,<2.0
 scipy>=1.10,<2.0
