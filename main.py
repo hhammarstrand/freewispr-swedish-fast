@@ -589,6 +589,7 @@ def _build_menu():
         pystray.MenuItem("Personlig ordlista", _open_dictionary),
         pystray.MenuItem("Inställningar", _open_settings),
         pystray.MenuItem("Hantera modeller", _open_model_manager),
+        pystray.MenuItem("Sekretess och data", _open_privacy),
         pystray.MenuItem(startup_label, _toggle_startup),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(f"Avsluta {APP_DISPLAY_NAME}", _quit),
@@ -604,6 +605,16 @@ def _open_model_manager(_=None):
 def _show_model_manager(active: str):
     from model_ui import ModelManagerWindow
     ModelManagerWindow(_tk_root, active_model=active)
+
+
+def _open_privacy(_=None):
+    if _tk_root:
+        _tk_root.after(0, _show_privacy)
+
+
+def _show_privacy():
+    from privacy_ui import PrivacyWindow
+    PrivacyWindow(_tk_root)
 
 
 def _quit(_=None):

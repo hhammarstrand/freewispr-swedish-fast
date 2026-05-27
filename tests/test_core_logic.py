@@ -961,3 +961,70 @@ def test_model_ui_delete_local_model_returns_false_when_nothing_to_remove(monkey
     model_ui = importlib.import_module("model_ui")
 
     assert model_ui.delete_local_model("tiny") is False
+
+# ---------- privacy_ui (PR 1.4) ---------- #
+
+def test_privacy_wipe_path_removes_file(tmp_path):
+    import importlib
+    privacy_ui = importlib.reload(importlib.import_module("privacy_ui"))
+    f = tmp_path / "x.json"
+    f.write_text("hello")
+    assert privacy_ui.wipe_path(f) is True
+    assert not f.exists()
+
+
+def test_privacy_wipe_path_removes_directory(tmp_path):
+    import importlib
+    privacy_ui = importlib.reload(importlib.import_module("privacy_ui"))
+    d = tmp_path / "models"
+    (d / "sub").mkdir(parents=True)
+    (d / "sub" / "a.bin").write_bytes(b"x")
+    assert privacy_ui.wipe_path(d) is True
+    assert not d.exists()
+
+
+def test_privacy_wipe_path_returns_false_when_missing(tmp_path):
+    import importlib
+    privacy_ui = importlib.reload(importlib.import_module("privacy_ui"))
+    assert privacy_ui.wipe_path(tmp_path / "does-not-exist") is False
+
+
+def test_privacy_path_size_human_handles_missing(tmp_path):
+    import importlib
+    privacy_ui = importlib.reload(importlib.import_module("privacy_ui"))
+    assert privacy_ui._path_size_human(tmp_path / "missing") == "— saknas"
+
+
+def test_privacy_path_size_human_file(tmp_path):
+    import importlib
+    privacy_ui = importlib.reload(importlib.import_module("privacy_ui"))
+    f = tmp_path / "x.bin"
+    f.write_bytes(b"x" * 2048)  # 2 KB
+    out = privacy_ui._path_size_human(f)
+    assert "KB" in out or "MB" in out  # 2048 bytes -> "2.0 KB"
+
+
+def test_privacy_path_size_human_directory(tmp_path):
+    import importlib
+    privacy_ui = importlib.reload(importlib.import_module("privacy_ui"))
+    d = tmp_path / "dir"
+    d.mkdir()
+    (d / "a").write_bytes(b"x" * 1000)
+    (d / "b").write_bytes(b"x" * 1000)
+    out = privacy_ui._path_size_human(d)
+    # 2000 bytes total; should report KB or similar, not '— saknas'
+    assert "saknas" not in out
+    assert any(unit in out for unit in ("B", "KB", "MB"))
+
+
+def test_privacy_data_targets_uses_current_config_dir(monkeypatch, tmp_path):
+    """_data_targets() resolves CONFIG_DIR at call time, not import time."""
+    import sys as _sys
+    fake_cfg = SimpleNamespace(CONFIG_DIR=tmp_path / "fakehome")
+    monkeypatch.setitem(_sys.modules, "config", fake_cfg)
+    if "privacy_ui" in _sys.modules:
+        del _sys.modules["privacy_ui"]
+    privacy_ui = importlib.import_module("privacy_ui")
+    targets = privacy_ui._data_targets()
+    log_path, _desc = targets["Loggfil"]
+    assert log_path == tmp_path / "fakehome" / "freewispr.log"
