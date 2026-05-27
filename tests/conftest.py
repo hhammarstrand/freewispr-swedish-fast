@@ -119,13 +119,25 @@ _stub(
 )
 
 # torch is conditionally imported by transcriber.py (CUDA detection) and
-# by some tests. Provide just enough surface to make 'import torch' succeed.
+# probed reflectively by scipy's array-api-compat layer
+# (scipy/_lib/array_api_compat/common/_helpers.py does
+# `getattr(torch_module, "Tensor")` to detect torch tensors at runtime).
+# We need to provide ALL the attributes those probes look for, otherwise
+# scipy raises AttributeError on every np.linspace / np.array operation.
+class _FakeTensor:
+    """Placeholder so isinstance(x, torch.Tensor) returns False safely."""
+
+    pass
+
+
 _stub(
     "torch",
     cuda=SimpleNamespace(
         is_available=lambda: False,
         empty_cache=lambda: None,
     ),
+    Tensor=_FakeTensor,
+    is_tensor=lambda x: False,
 )
 
 
