@@ -1,13 +1,14 @@
 """
 Personal dictionary — word corrections applied after transcription.
-Stored at ~/.freewispr-swedish/corrections.json as {"wrong": "right", ...}
+Stored at ~/.{APP_NAME}/corrections.json as {"wrong": "right", ...}
 """
 import re
 from pathlib import Path
 
 from json_store import load_json, save_json_atomic
+from config import APP_NAME
 
-_FILE = Path.home() / ".freewispr-swedish" / "corrections.json"
+_FILE = Path.home() / f".{APP_NAME}" / "corrections.json"
 
 # In-memory cache — avoids re-reading JSON on every transcription.
 _cache: dict[str, str] | None = None

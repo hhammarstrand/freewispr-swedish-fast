@@ -17,10 +17,12 @@ import argparse
 import logging
 from pathlib import Path
 
+from config import APP_NAME
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger("convert")
 
-MODEL_DIR = Path.home() / ".freewispr-swedish" / "models"
+MODEL_DIR = Path.home() / f".{APP_NAME}" / "models"
 
 KBLAB_MODELS = {
     "tiny": "KBLab/kb-whisper-tiny",

@@ -1,5 +1,5 @@
 """
-freewispr-swedish — Svensk speech-to-text för Windows
+freewispr-fast — Svensk speech-to-text för Windows (Parakeet/streaming experimental fork)
 Entry point: system tray icon + dictation mode.
 """
 import sys
@@ -17,9 +17,14 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 log = logging.getLogger("freewispr")
-log.info("=== freewispr-swedish startar ===")
 
-_LOG_DIR = Path.home() / ".freewispr-swedish"
+import config as cfg_module  # noqa: E402  (need APP_NAME before logging dir)
+APP_NAME = cfg_module.APP_NAME
+APP_DISPLAY_NAME = "freewispr-fast"
+
+log.info("=== %s startar ===", APP_DISPLAY_NAME)
+
+_LOG_DIR = Path.home() / f".{APP_NAME}"
 _LOG_FILE = _LOG_DIR / "freewispr.log"
 
 
@@ -46,7 +51,7 @@ try:
     from PIL import Image, ImageDraw
     import pystray
 
-    import config as cfg_module
+    # cfg_module is imported above (need APP_NAME for log dir).
     # Heavy modules (torch, faster_whisper, scipy) are imported lazily
     # inside _load_app() so the tray icon appears in <1 second.
     from ui import SettingsWindow, SnippetsWindow, DictionaryWindow, FloatingIndicator, _style
@@ -124,11 +129,14 @@ _ICON_PATH = _ASSET_DIR / "icon.ico"
 
 
 def _draw_fallback_icon() -> Image.Image:
-    """Mic glyph drawn with Pillow — used only if assets/icon.ico is missing."""
+    """Mic glyph drawn with Pillow — used only if assets/icon.ico is missing.
+
+    Fork uses orange to be visually distinct from upstream's purple icon.
+    """
     size = 64
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    draw.ellipse([4, 4, size - 4, size - 4], fill="#7c5cfc")
+    draw.ellipse([4, 4, size - 4, size - 4], fill="#fc7c5c")  # orange (fork)
     cx = size // 2
     draw.rounded_rectangle([cx - 9, 12, cx + 9, 36], radius=9, fill="white")
     draw.arc([cx - 16, 26, cx + 16, 50], start=0, end=180, fill="white", width=3)
@@ -191,7 +199,7 @@ def _load_app():
 
 def _set_tray_status(msg: str):
     if _tray_icon:
-        _tray_icon.title = f"freewispr-swedish — {msg}"
+        _tray_icon.title = f"{APP_DISPLAY_NAME} — {msg}"
     if _status_var and _tk_root:
         _tk_root.after(0, lambda: _status_var.set(msg))
 
@@ -417,7 +425,7 @@ def _startup_exe_path() -> str:
 
 
 _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-_RUN_VALUE = "freewispr-swedish"
+_RUN_VALUE = APP_NAME  # "freewispr-swedish-parakeet" — distinct from upstream
 
 
 def _open_run_key(write: bool = False):
@@ -477,7 +485,7 @@ def _build_menu():
         pystray.MenuItem("Inställningar", _open_settings),
         pystray.MenuItem(startup_label, _toggle_startup),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Avsluta freewispr-swedish", _quit),
+        pystray.MenuItem(f"Avsluta {APP_DISPLAY_NAME}", _quit),
     )
 
 
@@ -514,9 +522,9 @@ def main():
     # Build tray icon
     menu = _build_menu()
     _tray_icon = pystray.Icon(
-        "freewispr-swedish",
+        APP_NAME,
         _make_icon(),
-        "freewispr-swedish — Startar...",
+        f"{APP_DISPLAY_NAME} — Startar...",
         menu,
     )
 

@@ -26,10 +26,11 @@ from pathlib import Path
 
 import corrections as corr_module
 from json_store import load_json, save_json_atomic
+from config import APP_NAME
 
 log = logging.getLogger("freewispr")
 
-LEARNED_FILE = Path.home() / ".freewispr-swedish" / "learned.json"
+LEARNED_FILE = Path.home() / f".{APP_NAME}" / "learned.json"
 
 # How many times the same correction must occur before auto-promoting
 PROMOTE_THRESHOLD = 3

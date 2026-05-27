@@ -7,9 +7,10 @@ try:
 except Exception:
     keyring = None
 
-CONFIG_DIR = Path.home() / ".freewispr-swedish"
+APP_NAME = "freewispr-swedish-parakeet"
+CONFIG_DIR = Path.home() / f".{APP_NAME}"
 CONFIG_FILE = CONFIG_DIR / "config.json"
-_KEYRING_SERVICE = "freewispr-swedish"
+_KEYRING_SERVICE = APP_NAME
 _KEYRING_USERNAME = "llm_api_key"
 
 DEFAULTS = {

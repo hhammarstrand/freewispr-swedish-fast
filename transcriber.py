@@ -6,10 +6,11 @@ import numpy as np
 from faster_whisper import WhisperModel
 
 import corrections as corr_module
+from config import APP_NAME
 
 log = logging.getLogger("freewispr")
 
-CONFIG_DIR = Path.home() / ".freewispr-swedish"
+CONFIG_DIR = Path.home() / f".{APP_NAME}"
 MODEL_DIR = CONFIG_DIR / "models"
 HOTWORDS_FILE = CONFIG_DIR / "hotwords.txt"
 
