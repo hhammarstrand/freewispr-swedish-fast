@@ -1,0 +1,36 @@
+# Ruff configuration for freewispr-fast.
+#
+# Intentionally conservative: this is a quality floor, not a style police.
+# When in doubt we err on the side of NOT flagging — we don't want the CI
+# job to become a wall of red that gets ignored.
+
+line-length = 110
+target-version = "py311"
+
+extend-exclude = [
+    "build",
+    "dist",
+    ".venv",
+    "venv",
+]
+
+[lint]
+# Enabled rule families:
+#   E,W  pycodestyle errors and warnings (whitespace, indent, bad syntax)
+#   F    pyflakes (unused imports, undefined names — these catch real bugs)
+#   I    isort (consistent import ordering)
+#   B    flake8-bugbear (likely-bug patterns: mutable defaults, etc.)
+#   UP   pyupgrade (modernize idioms safely)
+select = ["E", "W", "F", "I", "B", "UP"]
+
+# Things we explicitly don't care about:
+#   E501  line-too-long       (covered by `line-length` + formatter)
+#   E731  lambda-assignment   (used heavily in tray-menu callbacks)
+#   B008  function-call-in-default-argument (intentional for Path.home() defaults)
+#   UP006 deprecated-import (False positives on conditional typing imports)
+ignore = ["E501", "E731", "B008", "UP006"]
+
+[lint.per-file-ignores]
+# Tests heavily use module reloading + dynamic attribute setting; the
+# usual import-cleanliness rules don't help there.
+"tests/*" = ["E402", "F401", "F811"]

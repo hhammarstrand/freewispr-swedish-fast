@@ -1,0 +1,30 @@
+version: 2
+updates:
+  # Python dependencies (requirements.txt)
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "Europe/Stockholm"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    # Group patch + minor bumps into a single PR per week to cut review noise;
+    # majors still get their own PR so we can audit breaking changes.
+    groups:
+      python-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # GitHub Actions versions
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - ci

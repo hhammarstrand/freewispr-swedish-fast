@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest (${{ matrix.os }} / py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Primary target is Windows (the app is Windows-only) but we also
+        # run on Ubuntu to catch accidental platform-specific imports in
+        # the test paths.
+        os: [windows-latest, ubuntu-latest]
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install test dependencies
+        # We deliberately skip torch / faster-whisper / sounddevice etc.
+        # in CI: tests monkeypatch those modules, and pulling the real
+        # wheels would balloon CI time by ~10 minutes for zero coverage gain.
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pyperclip keyboard pillow keyring pystray numpy scipy
+
+      - name: Run pytest
+        run: pytest tests/ -v --tb=short
+
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install ruff
+      - name: ruff check
+        # No autofix in CI; the rule set is intentionally minimal so
+        # this is a quality floor, not a style straightjacket.
+        run: ruff check .
+
+  audit:
+    name: pip-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install pip-audit
+      - name: Audit requirements.txt
+        # --strict: any unfixable vulnerability fails the job.
+        # If we hit a vuln with no upgrade path we'll add an explicit
+        # --ignore-vuln entry with a justification comment.
+        run: pip-audit --requirement requirements.txt --strict
