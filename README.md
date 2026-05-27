@@ -114,9 +114,21 @@ Bygget skapar en `dist/freewispr-swedish/`-mapp med `freewispr-swedish.exe` och 
 
 ---
 
-## Modeller
+## Backends
 
-freewispr-swedish anvander [KBLab:s Whisper-modeller](https://huggingface.co/KBLab) tranade pa over 50 000 timmar svenskt tal.
+### Parakeet (standard med GPU)
+
+Nar CUDA ar tillgangligt och `nemo_toolkit[asr]` ar installerat anvands NVIDIA Parakeet (`nvidia/parakeet-tdt-0.6b-v3`) som primar backend. Parakeet ger ~4x lagre latens jamfort med Whisper vid jamforbar WER.
+
+Backend valjs fran systemfacksikonen -> **Backend** -> Auto/Parakeet/Whisper.
+
+- **Auto** (standard) -- Parakeet om GPU + NeMo finns, annars Whisper
+- **Parakeet** -- tvinga Parakeet (kraver NeMo + CUDA)
+- **Whisper** -- tvinga Whisper oavsett GPU
+
+### Whisper-modeller (KBLab)
+
+[KBLab:s Whisper-modeller](https://huggingface.co/KBLab) anvands som fallback, tranade pa over 50 000 timmar svenskt tal.
 
 | Modell | WER (svenska) | Storlek | Jamforelse OpenAI |
 |--------|---------------|---------|-------------------|
