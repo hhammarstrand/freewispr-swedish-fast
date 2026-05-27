@@ -311,12 +311,16 @@ class Transcriber:
     def __init__(self, model_size: str = "small", language: str = "sv",
                  use_cuda: bool = True,
                  llm_enabled: bool = False, llm_api_key: str = "",
-                 llm_model: str = "gpt-4.1-nano"):
+                 llm_model: str = "gpt-4.1-nano",
+                 style: str = "casual",
+                 custom_style_prompt: str = ""):
         MODEL_DIR.mkdir(parents=True, exist_ok=True)
         self.language = language
         self.llm_enabled = llm_enabled
         self.llm_api_key = llm_api_key
         self.llm_model = llm_model
+        self.style = style
+        self.custom_style_prompt = custom_style_prompt
 
         # Get the KBLab model name
         model_name = KBLAB_MODELS.get(model_size, model_size)
@@ -480,7 +484,9 @@ class Transcriber:
             from auto_learn import record_correction
             from llm_polish import polish
 
-            result = polish(text, self.llm_api_key, self.llm_model)
+            result = polish(text, self.llm_api_key, self.llm_model,
+                            style=self.style,
+                            custom_prompt=self.custom_style_prompt)
             if result.changed:
                 # Feed the before/after to auto-learning
                 record_correction(text, result.text)

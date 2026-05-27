@@ -120,7 +120,7 @@ def test_llm_polish_length_guard_allows_short_legitimate_polish(monkeypatch):
 
     monkeypatch.setattr(llm_polish, "resolve_api_key", lambda k="": "fake")
 
-    def fake_call(api_key, model, user_text, timeout_sec=8.0):
+    def fake_call(api_key, model, user_text, timeout_sec=8.0, system_prompt=""):
         # Simulate an LLM that returned a 22-char polish for a 100-char input.
         # That's 22 % — old guard would reject; new guard keeps it because
         # 22 chars is over the 20-char absolute floor.
@@ -229,6 +229,70 @@ def test_llm_polish_falls_back_without_logging_body(monkeypatch, caplog):
     assert not result.changed
     assert "hemlig text" not in caplog.text
     assert "echoed sensitive text" not in caplog.text
+
+
+# --------------------------------------------------------------------------- #
+#  Style preset (PR 2.1)                                                       #
+# --------------------------------------------------------------------------- #
+
+def test_style_default_falls_back_to_casual():
+    llm_polish = importlib.import_module("llm_polish")
+    prompt = llm_polish._build_system_prompt()
+    assert llm_polish.STYLES["casual"] in prompt
+    assert llm_polish._SYSTEM_PROMPT in prompt
+
+
+def test_style_unknown_value_falls_back_to_default():
+    llm_polish = importlib.import_module("llm_polish")
+    prompt = llm_polish._build_system_prompt(style="nonsense-value")
+    assert llm_polish.STYLES[llm_polish.DEFAULT_STYLE] in prompt
+
+
+def test_style_each_preset_injects_its_guidance():
+    llm_polish = importlib.import_module("llm_polish")
+    for key, guidance in llm_polish.STYLES.items():
+        prompt = llm_polish._build_system_prompt(style=key)
+        assert guidance in prompt, f"style={key!r} did not include its guidance"
+
+
+def test_style_custom_appends_user_prompt():
+    llm_polish = importlib.import_module("llm_polish")
+    prompt = llm_polish._build_system_prompt(
+        style="custom",
+        custom_prompt="Skriv alltid i tredje person.",
+    )
+    assert "Skriv alltid i tredje person." in prompt
+    # Safety: the base prompt (which forbids content changes) is still there
+    assert llm_polish._SYSTEM_PROMPT in prompt
+
+
+def test_style_custom_empty_falls_back_to_default():
+    llm_polish = importlib.import_module("llm_polish")
+    prompt = llm_polish._build_system_prompt(style="custom", custom_prompt="   ")
+    assert llm_polish.STYLES[llm_polish.DEFAULT_STYLE] in prompt
+
+
+def test_polish_forwards_style_to_call_api(monkeypatch):
+    """polish(style=..., custom_prompt=...) must reach _call_api as system_prompt."""
+    llm_polish = importlib.import_module("llm_polish")
+    monkeypatch.setattr(llm_polish, "resolve_api_key", lambda k="": "fake")
+
+    captured = {}
+
+    def fake_call(api_key, model, user_text, timeout_sec=8.0, system_prompt=""):
+        captured["system_prompt"] = system_prompt
+        return {"choices": [{"message": {"content": user_text}}]}
+
+    monkeypatch.setattr(llm_polish, "_call_api", fake_call)
+
+    llm_polish.polish("Hej världen.", "k", style="formal")
+    assert llm_polish.STYLES["formal"] in captured["system_prompt"]
+
+
+def test_style_in_config_defaults():
+    config = importlib.import_module("config")
+    assert config.DEFAULTS["style"] == "casual"
+    assert config.DEFAULTS["custom_style_prompt"] == ""
 
 
 def test_llm_polish_resolves_github_token_from_environment(monkeypatch):

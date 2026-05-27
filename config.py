@@ -30,6 +30,11 @@ DEFAULTS = {
     # short utterances at the cost of slightly slower long ones.
     "paste_strategy": "auto",
     "paste_threshold": 200,
+    # Style preset for LLM polish. One of casual/formal/code/email/custom.
+    # When "custom", the value of custom_style_prompt is appended to the
+    # base system prompt instead of a built-in preset.
+    "style": "casual",
+    "custom_style_prompt": "",
 }
 
 

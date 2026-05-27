@@ -73,6 +73,58 @@ _SYSTEM_PROMPT = (
     "Returnera BARA den korrigerade texten, inget annat."
 )
 
+# Style presets: appended to _SYSTEM_PROMPT as guidance. The LLM is
+# instructed NOT to rewrite content — only to apply light register hints
+# while fixing transcription errors. Keys must match config["style"].
+STYLES = {
+    "casual": (
+        "Ton: vardaglig och naturlig. Behall talspraks-karaktaren. "
+        "Tag bort tydliga utfyllnadsord (eh, alltsa, liksom) om de uppenbarligen "
+        "ar talfel, men behall ovriga formuleringar oforandrade."
+    ),
+    "formal": (
+        "Ton: formell och saklig. Anvand fullstandig meningsbyggnad och "
+        "undvik talspraks-utfyllnader (eh, ju, liksom, typ). "
+        "Skriv ut forkortningar (t.ex. -> till exempel) endast om de uppenbart "
+        "ar dikterade som hela ord."
+    ),
+    "code": (
+        "Ton: teknisk. Behandla engelska tekniska termer (function, variable, "
+        "API, commit, branch) som korrekta - korrigera inte till svenska. "
+        "Bevara CamelCase, snake_case och kod-symboler exakt. "
+        "Lagg inte till slutpunkt om texten ser ut som en identifierare eller "
+        "kort kommando."
+    ),
+    "email": (
+        "Ton: artig e-postton. Inled inte med halsningsfras om anvandaren inte "
+        "dikterat en. Korrigera grammatik och interpunktion men behall "
+        "anvandarens egen formulering och langd."
+    ),
+}
+
+DEFAULT_STYLE = "casual"
+
+
+def _build_system_prompt(style: str = DEFAULT_STYLE, custom_prompt: str = "") -> str:
+    """Compose the system prompt for a given style.
+
+    Unknown style values fall back to DEFAULT_STYLE. The 'custom' style
+    appends the user-supplied custom_prompt verbatim (trimmed). Custom
+    prompts are appended, never replace, the safety-critical base prompt
+    that forbids content changes.
+    """
+    base = _SYSTEM_PROMPT
+    style_key = (style or "").strip().lower()
+    if style_key == "custom":
+        suffix = (custom_prompt or "").strip()
+        if not suffix:
+            # Empty custom prompt -> behave as default casual.
+            return f"{base} {STYLES[DEFAULT_STYLE]}"
+        return f"{base} Anvandarens egna instruktioner: {suffix}"
+    if style_key not in STYLES:
+        style_key = DEFAULT_STYLE
+    return f"{base} {STYLES[style_key]}"
+
 
 class PolishResult(NamedTuple):
     """Result of a polish operation."""
@@ -83,12 +135,13 @@ class PolishResult(NamedTuple):
 
 
 def _call_api(api_key: str, model: str, user_text: str,
-              timeout_sec: float = 8.0) -> dict:
+              timeout_sec: float = 8.0,
+              system_prompt: str = "") -> dict:
     """Make a raw API call. Returns the parsed JSON response."""
     payload = json.dumps({
         "model": model,
         "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt or _SYSTEM_PROMPT},
             {"role": "user", "content": user_text},
         ],
         "temperature": 0,
@@ -108,7 +161,9 @@ def _call_api(api_key: str, model: str, user_text: str,
         return json.loads(resp.read().decode("utf-8"))
 
 
-def polish(text: str, api_key: str, model: str = DEFAULT_MODEL) -> PolishResult:
+def polish(text: str, api_key: str, model: str = DEFAULT_MODEL,
+           style: str = DEFAULT_STYLE,
+           custom_prompt: str = "") -> PolishResult:
     """Send text through LLM for polishing. Returns PolishResult.
 
     On any error, returns the original text unchanged (never blocks dictation).
@@ -120,9 +175,11 @@ def polish(text: str, api_key: str, model: str = DEFAULT_MODEL) -> PolishResult:
     if not text or not resolved_key:
         return PolishResult(text=text, model=model, latency_ms=0, changed=False)
 
+    system_prompt = _build_system_prompt(style, custom_prompt)
+
     t0 = time.perf_counter()
     try:
-        data = _call_api(resolved_key, model, text)
+        data = _call_api(resolved_key, model, text, system_prompt=system_prompt)
         result = data["choices"][0]["message"]["content"].strip()
         latency = int((time.perf_counter() - t0) * 1000)
 

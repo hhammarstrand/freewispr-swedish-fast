@@ -105,6 +105,8 @@ def _make_transcriber(model_size: str, use_cuda: bool):
         ),
         llm_api_key=_config.get("llm_api_key", ""),
         llm_model=_config.get("llm_model", "gpt-4.1-nano"),
+        style=_config.get("style", "casual"),
+        custom_style_prompt=_config.get("custom_style_prompt", ""),
     )
 
 
@@ -589,12 +591,66 @@ def _build_menu():
         pystray.MenuItem("Snippets", _open_snippets),
         pystray.MenuItem("Personlig ordlista", _open_dictionary),
         pystray.MenuItem("Inställningar", _open_settings),
+        pystray.MenuItem("Stil", _build_style_submenu()),
         pystray.MenuItem("Hantera modeller", _open_model_manager),
         pystray.MenuItem("Sekretess och data", _open_privacy),
         pystray.MenuItem(startup_label, _toggle_startup),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(f"Avsluta {APP_DISPLAY_NAME}", _quit),
     )
+
+
+# Style preset labels (Swedish) shown in the tray submenu. Values must
+# match llm_polish.STYLES keys (plus "custom").
+_STYLE_LABELS = [
+    ("casual", "Vardaglig"),
+    ("formal", "Formell"),
+    ("code", "Kod / teknisk"),
+    ("email", "E-post"),
+    ("custom", "Egen (avancerat)"),
+]
+
+
+def _build_style_submenu():
+    def _make_item(key: str, label: str):
+        def _on_click(_icon=None, _item=None, _k=key):
+            _set_style(_k)
+        return pystray.MenuItem(
+            label,
+            _on_click,
+            checked=lambda item, _k=key: (_config.get("style", "casual") if _config else "casual") == _k,
+            radio=True,
+        )
+
+    items = [_make_item(k, lbl) for k, lbl in _STYLE_LABELS]
+    return pystray.Menu(*items)
+
+
+def _set_style(style: str):
+    """Persist a new style preset and live-update the running transcriber."""
+    if not _config:
+        return
+    if style == _config.get("style"):
+        return
+    _config["style"] = style
+    try:
+        cfg_module.save(_config)
+    except Exception as e:
+        log.error("Kunde inte spara stilval: %s", e)
+        if _indicator:
+            _indicator.show("Kunde inte spara stilval", state="error")
+            _indicator.hide(delay_ms=4000)
+        return
+    # Live-update without rebuilding the transcriber — style is consulted
+    # at polish-time, so a simple attribute swap is enough.
+    if _transcriber is not None:
+        _transcriber.style = style
+        _transcriber.custom_style_prompt = _config.get("custom_style_prompt", "")
+    if _indicator:
+        label = dict(_STYLE_LABELS).get(style, style)
+        _indicator.show(f"Stil: {label}", state="info")
+        _indicator.hide(delay_ms=2000)
+    _rebuild_menu()
 
 
 def _open_model_manager(_=None):
