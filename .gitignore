@@ -8,7 +8,13 @@ build/
 *.egg-info/
 .env
 .venv/
+.venv-*/
 venv/
+
+# Parakeet bench artefacts (datasets + per-run reports)
+bench/cv_cache/
+bench/results.md
+bench/wavs/
 assets/icon.ico
 
 # Test / lint caches
