@@ -118,22 +118,29 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Import production modules
-        # main.py is the entrypoint; importing it transitively pulls
-        # config, transcriber, audio, dictation, ui, model_ui, privacy_ui,
-        # llm_polish, snippets, corrections, auto_learn, paste, text_inject,
-        # modifiers, sounds. If any wheel is broken this fails loudly.
+      - name: Install xvfb (Linux only)
+        if: runner.os == 'Linux'
+        # main.py's transitive imports pull tkinter / Xlib via pystray.
+        # Without a virtual framebuffer, importing main raises
+        # DisplayNameError. xvfb-run gives us a fake display for free.
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: Import production modules (Windows)
+        if: runner.os == 'Windows'
+        # If any wheel is broken (numpy / faster-whisper / ctranslate2)
+        # this fails loudly. main.py defers Tk() to main() so import is safe.
         shell: bash
-        env:
-          # Headless Linux: prevent any Toplevel() in import-time code
-          # from trying to open an X display. main.py defers Tk() to
-          # main() so import alone is safe even without DISPLAY.
-          DISPLAY: ""
         run: |
           python -c "import main; print('main.py imported OK')"
           python -c "import model_ui; print('model_ui.py imported OK')"
           python -c "import privacy_ui; print('privacy_ui.py imported OK')"
           python -c "import text_inject; print('text_inject.py imported OK')"
+      - name: Import production modules (Linux + xvfb)
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a python -c "import main; print('main.py imported OK')"
+          xvfb-run -a python -c "import model_ui; print('model_ui.py imported OK')"
+          xvfb-run -a python -c "import privacy_ui; print('privacy_ui.py imported OK')"
+          xvfb-run -a python -c "import text_inject; print('text_inject.py imported OK')"
 
   audit:
     name: pip-audit

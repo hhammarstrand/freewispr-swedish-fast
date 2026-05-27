@@ -18,8 +18,17 @@ mask real test failures.
 """
 from __future__ import annotations
 
+import os
 import sys
 from types import SimpleNamespace
+
+# pytest is optional here: the smoke-import CI job re-uses this file to
+# get the stubs, without installing pytest. The collection hook below
+# only runs when pytest IS present, so we make the import lazy.
+try:
+    import pytest
+except ModuleNotFoundError:  # pragma: no cover — smoke-import path only
+    pytest = None  # type: ignore[assignment]
 
 
 def _stub(name: str, **attrs) -> None:
@@ -114,11 +123,6 @@ _stub(
 # into pytest_collection_modifyitems below.
 
 
-import os  # noqa: E402
-
-import pytest  # noqa: E402
-
-
 _TESTS_REQUIRING_DISPLAY = {
     "test_main_apply_settings_serialised",
     "test_llm_only_save_failure_restores_transcriber_state",
@@ -127,6 +131,8 @@ _TESTS_REQUIRING_DISPLAY = {
 
 def pytest_collection_modifyitems(config, items):
     """Skip Tk-using tests on headless Linux (no DISPLAY)."""
+    if pytest is None:
+        return
     if sys.platform != "linux":
         return
     if os.environ.get("DISPLAY"):

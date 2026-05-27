@@ -639,6 +639,9 @@ def test_paste_text_serializes_clipboard_workers(monkeypatch):
     monkeypatch.setattr(paste, "_release_modifiers", lambda mods=(): None)
     monkeypatch.setattr(paste.time, "sleep", lambda seconds: None)
     monkeypatch.setattr(paste.threading.Thread, "start", lambda self: self._target(*self._args, **self._kwargs))
+    # Force non-console window so the ctrl+v branch is exercised (CI runs
+    # under a real cmd.exe console which would otherwise route to shift+insert).
+    monkeypatch.setattr(paste, "_active_window_class", lambda: "Notepad")
 
     paste.paste_text("first")
     paste.paste_text("second")
