@@ -184,8 +184,11 @@ class DictationMode:
         # Stop the stream cheaply and hand back the captured audio. Downmix
         # and resample happen in the worker — keeping this hook callback
         # under ~10 ms so Windows doesn't disable the low-level hook.
+        # stop_fast_async() defers PortAudio teardown to a daemon thread
+        # so the key-release path returns immediately; the next start()
+        # joins it before opening a fresh stream.
         try:
-            audio, channels, rate = self.recorder.stop_fast()
+            audio, channels, rate = self.recorder.stop_fast_async()
         except Exception as e:
             log.error("Audio stop error: %s", e, exc_info=True)
             sounds.play_error()

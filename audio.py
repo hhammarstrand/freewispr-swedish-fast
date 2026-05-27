@@ -1,5 +1,6 @@
 import logging
 import math
+import threading
 import time as time_module
 
 import numpy as np
@@ -173,6 +174,11 @@ class MicRecorder:
         self._sumsq_count = 0
         self.recording = False
         self._stream: sd.InputStream | None = None
+        # Background thread that owns stream.stop()+close() after stop_fast_async.
+        # Held only so start() can join it before opening a new stream — without
+        # joining, PortAudio can race and the second start() either errors out
+        # or grabs a stale device handle. The thread itself is daemon.
+        self._pending_close: threading.Thread | None = None
         # Optional callback fired from the audio thread with the latest RMS
         # level (float). Used by the UI to drive the equalizer without a
         # polling timer. Must be cheap + thread-safe; the indicator throttles
@@ -193,6 +199,16 @@ class MicRecorder:
 
     def start(self):
         """Start recording. Tries multiple device/channel combos until one works."""
+        # If a previous stop_fast_async() handed cleanup to a background
+        # thread, wait for it here — opening a new InputStream while the
+        # old one is still being torn down races inside PortAudio and can
+        # leak handles or hang the next start. The join is short (typically
+        # 10-50 ms) and only happens on back-to-back dictations.
+        pending = self._pending_close
+        if pending is not None and pending.is_alive():
+            pending.join(timeout=0.5)
+        self._pending_close = None
+
         # Defensive: if a previous start() never reached stop() (e.g. exception
         # in the caller), close the leaked stream before opening a new one.
         if self._stream is not None:
@@ -369,6 +385,58 @@ class MicRecorder:
         # Copy so the worker can safely process while a new recording starts.
         # The copy is contiguous and ~23 MB worst case (120 s @ 48 kHz mono).
         captured = view.copy()
+        return captured, self._buffer_channels, rate
+
+    def stop_fast_async(self) -> tuple[np.ndarray, int, int]:
+        """Same contract as :py:meth:`stop_fast` but defers PortAudio teardown.
+
+        ``self._stream.stop()`` + ``close()`` together cost ~15-60 ms on
+        Windows because they wait for the PortAudio callback thread to
+        drain. That blocks the keyboard-hook thread on key-release, which
+        the user perceives as paste latency.
+
+        This variant grabs the audio buffer synchronously (cheap — just a
+        np.copy), nulls out ``self._stream`` so subsequent code sees no
+        active stream, and hands the actual stop()/close() pair to a
+        daemon thread. The next :py:meth:`start` calls
+        ``self._pending_close.join()`` so two streams never overlap.
+
+        Falls back to a synchronous tear-down when no stream is active or
+        if spawning the helper thread fails.
+        """
+        self.recording = False
+        rate = getattr(self, "_rate", TARGET_RATE)
+        stream = self._stream
+        self._stream = None
+
+        if self._buffer is None or self._buffer_offset == 0:
+            captured: np.ndarray = np.empty(0, dtype=np.float32)
+        else:
+            captured = self._buffer[:self._buffer_offset].copy()
+
+        if stream is None:
+            return captured, self._buffer_channels, rate
+
+        def _close():
+            try:
+                stream.stop()
+                stream.close()
+            except Exception:
+                pass
+
+        try:
+            t = threading.Thread(
+                target=_close,
+                name="audio-stream-close",
+                daemon=True,
+            )
+            t.start()
+            self._pending_close = t
+        except Exception:
+            # If we cannot spawn the helper for any reason, do it inline.
+            _close()
+            self._pending_close = None
+
         return captured, self._buffer_channels, rate
 
     def stop(self) -> np.ndarray:

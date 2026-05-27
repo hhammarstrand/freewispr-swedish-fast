@@ -489,6 +489,113 @@ def test_audio_callback_rms_uses_loudest_channel(monkeypatch):
     assert recorder.rms() == pytest.approx(0.5)
 
 
+# --------------------------------------------------------------------------- #
+#  stop_fast_async (PR 2.10)                                                   #
+# --------------------------------------------------------------------------- #
+
+def test_stop_fast_async_returns_before_stream_close_completes():
+    """Hook thread must not wait for PortAudio teardown.
+
+    Simulates a slow stream.stop() (200 ms) and asserts that
+    stop_fast_async returns in well under that — proves the close runs
+    on the background thread, not inline.
+    """
+    import time as _time
+
+    import numpy as np
+
+    audio = importlib.import_module("audio")
+    recorder = audio.MicRecorder()
+    recorder._ensure_buffer(audio.TARGET_RATE, 1)
+    recorder._buffer_offset = 5
+    recorder._buffer[:5] = np.array([0.1, 0.2, 0.3, 0.4, 0.5], dtype=np.float32)
+    recorder._rate = audio.TARGET_RATE
+
+    stop_calls = []
+
+    class SlowStream:
+        def stop(self):
+            stop_calls.append("stop")
+            _time.sleep(0.2)
+
+        def close(self):
+            stop_calls.append("close")
+
+    recorder._stream = SlowStream()
+    recorder.recording = True
+
+    t0 = _time.perf_counter()
+    captured, channels, rate = recorder.stop_fast_async()
+    elapsed = _time.perf_counter() - t0
+
+    # Caller path should be roughly the np.copy cost, not 200 ms.
+    assert elapsed < 0.1, f"stop_fast_async blocked for {elapsed*1000:.0f} ms"
+    assert captured.tolist() == [pytest.approx(x) for x in [0.1, 0.2, 0.3, 0.4, 0.5]]
+    assert recorder._stream is None
+    assert recorder.recording is False
+    assert rate == audio.TARGET_RATE
+
+    # The background thread must eventually finish both calls.
+    assert recorder._pending_close is not None
+    recorder._pending_close.join(timeout=1.0)
+    assert stop_calls == ["stop", "close"]
+
+
+def test_start_joins_pending_close_before_opening_new_stream(monkeypatch):
+    """A fresh start() must wait for the previous async close to finish."""
+    import time as _time
+
+    audio = importlib.import_module("audio")
+    recorder = audio.MicRecorder()
+
+    join_observed = {"alive_at_start_call": None}
+
+    class SlowStream:
+        def stop(self):
+            _time.sleep(0.15)
+
+        def close(self):
+            pass
+
+    recorder._stream = SlowStream()
+    recorder.recording = True
+    recorder.stop_fast_async()
+    pending = recorder._pending_close
+    assert pending is not None
+    assert pending.is_alive()
+
+    # Force start() into a no-op for the actual PortAudio call so we only
+    # measure the join behavior — patch _try_start to raise after the join.
+    def _explode(*a, **kw):
+        join_observed["alive_at_start_call"] = pending.is_alive()
+        raise RuntimeError("stop here, we just want to verify the join")
+
+    monkeypatch.setattr(audio, "_try_start", _explode)
+    monkeypatch.setattr(recorder, "_build_candidates", lambda: [(0, 16000, 1, "x")])
+
+    try:
+        recorder.start()
+    except Exception:
+        pass
+
+    # By the time start() reached _try_start, the pending close must have
+    # been joined (i.e. the thread is no longer alive).
+    assert join_observed["alive_at_start_call"] is False
+    assert recorder._pending_close is None
+
+
+def test_stop_fast_async_no_stream_does_not_spawn_thread():
+    audio = importlib.import_module("audio")
+    recorder = audio.MicRecorder()
+    recorder._stream = None
+    recorder._buffer_offset = 0
+
+    captured, _channels, _rate = recorder.stop_fast_async()
+
+    assert captured.size == 0
+    assert recorder._pending_close is None
+
+
 def test_corrections_apply_master_regex_handles_many_entries(tmp_path):
     """Master-regex path must apply all corrections in a single pass."""
     corrections = reload_with_home("corrections", tmp_path)
