@@ -101,6 +101,7 @@ Prioriterad förbättringslista baserad på repo-granskning 2026-05-20.
   - Kör även lint och tester i CI.
 
 - [ ] Pin modellrevisioner och verifiera checksums.
+  - KBLAB_REVISIONS-dict tillagt i transcriber.py; fyll i SHA:er fran HuggingFace.
   - Berör: `transcriber.py`, `convert_model.py`, `README.md`.
   - Använd fasta Hugging Face revisions/commit-SHA och dokumentera nätverksendpoints.
 
@@ -171,7 +172,7 @@ Prioriterad förbättringslista baserad på repo-granskning 2026-05-20.
   - Bygg en `re.compile(r'\b(' + '|'.join(re.escape(k) for k in corr) + r')\b', re.IGNORECASE)` cachad på mtime.
   - Verifiera case-bevarande för "Prak" vs "PRAK" → "Prakhar".
 
-- [ ] Pre-allokera audio ring-buffer i `MicRecorder`.
+- [x] Pre-allokera audio ring-buffer i `MicRecorder`.
   - Berör: `audio.py:162-200`.
   - `indata.copy()` per callback allokerar småarrayer från realtidstråden → GC-thrashing.
   - Använd `np.empty((MAX_SECONDS * rate, channels))` och `memcpy` chunks in.

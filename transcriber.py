@@ -103,13 +103,23 @@ def _patch_vocabulary(snapshot_dir: Path) -> None:
     except Exception as e:
         log.warning("Kunde inte patcha vocabulary.json: %s", e)
 
-# KBLab model mapping for Swedish Whisper
+# KBLab model mapping for Swedish Whisper.
+# Pinned revisions should be verified with:
+#   huggingface-cli download KBLab/kb-whisper-small --revision <sha>
 KBLAB_MODELS = {
     "tiny": "KBLab/kb-whisper-tiny",
     "base": "KBLab/kb-whisper-base",
     "small": "KBLab/kb-whisper-small",
     "medium": "KBLab/kb-whisper-medium",
     "large": "KBLab/kb-whisper-large",
+}
+
+KBLAB_REVISIONS: dict[str, str | None] = {
+    "tiny": None,
+    "base": None,
+    "small": None,
+    "medium": None,
+    "large": None,
 }
 
 # Whisper noise/placeholder tokens to strip (always, regardless of settings).
