@@ -101,6 +101,35 @@ _stub(
 
 
 # --------------------------------------------------------------------------- #
+#  ML stack (faster-whisper / torch)                                           #
+# --------------------------------------------------------------------------- #
+
+# transcriber.py imports faster_whisper at module level. Test code that
+# actually exercises transcription monkeypatches WhisperModel directly,
+# but importing transcriber for any other reason must not fail in the
+# smoke-import job.
+class _FakeWhisperModel:
+    def __init__(self, *args, **kwargs):
+        raise RuntimeError("conftest stub — real faster_whisper not installed")
+
+
+_stub(
+    "faster_whisper",
+    WhisperModel=_FakeWhisperModel,
+)
+
+# torch is conditionally imported by transcriber.py (CUDA detection) and
+# by some tests. Provide just enough surface to make 'import torch' succeed.
+_stub(
+    "torch",
+    cuda=SimpleNamespace(
+        is_available=lambda: False,
+        empty_cache=lambda: None,
+    ),
+)
+
+
+# --------------------------------------------------------------------------- #
 #  Tray / system UI                                                            #
 # --------------------------------------------------------------------------- #
 
