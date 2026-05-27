@@ -3,7 +3,7 @@
 # still numpy-1 ABI; numpy 2 silently breaks them at runtime.
 faster-whisper>=1.0.3,<2.0
 sounddevice>=0.4.6,<0.6
-numpy>=1.24,<2.0
+numpy>=2.4.6,<3.0
 scipy>=1.10,<2.0
 keyboard>=0.13.5,<0.14
 pyperclip>=1.8.2,<2.0
