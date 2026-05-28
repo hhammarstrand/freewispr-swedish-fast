@@ -2,18 +2,24 @@
 
 ## Goal
 
-Gör freewispr-fast till den snabbaste och mest pålitliga svenska speech-to-text-appen för Windows — med perceived latency under 200 ms (record→paste) på GPU, och en ren kodbas redo för publik release.
+Driv perceived latency (key-release → text in target app) under 100 ms på GPU genom att streama Parakeet-inferens under inspelning. Visa partiell hypotes live i flytande indikator. Behåll Whisper som batch-fallback. Bibehåll ren kodbas och publik release-readiness.
 
 ### Tre spår, i prioritetsordning:
 
-**1. Parakeet-integration (backend-byte)**
-Byt primär STT-backend från faster-whisper till NVIDIA Parakeet (parakeet-tdt-0.6b-v3). Benchmarks visar 4x snabbare latens med jämförbar WER. Behåll faster-whisper som fallback (CPU, egennamn). Abstrahera transcriber-lagret så backends kan bytas från tray-menyn.
+**1. Streaming-inferens (Parakeet)**
+Lägg till `start_stream()` på `ParakeetBackend` som tar emot 16 kHz mono-chunks under inspelning och returnerar växande partiella hypoteser. Implementeras först som chunked-batch (kör `model.transcribe()` på växande fönster var ~300 ms — RTF 0.013 ger gott om huvud) med möjlig uppgradering till NeMos cache-aware streaming om checkpointen stöder det. Vid key-release: `finalize()` returnerar slutlig hypotes, vanligen efter <50 ms eftersom merparten av audion redan transkriberats. Bakom config-flagga `streaming: bool` (default `false` tills bench validerar).
 
-**2. Latens och prestanda**
-Driv ner end-to-end-latens: async LLM-polish efter paste, pre-allokerad audio-ringbuffer, soxr-resampling, kanaldetektering vid stream-open. Mät och rapportera perceived latency i benchmarks.
+**2. UX för streaming**
+`audio.MicRecorder` exponerar `on_chunk: Callable[[ndarray, int], None]` (50 ms granularitet, mono raw). `dictation.DictationMode._on_press` kopplar chunk-callbacken till en `StreamingSession` från transcriber-lagret. `ui.indicator` får `show_partial(text)` som ritar en sublinje under nivåstaplarna (throttle ~5 Hz). En paste vid release — ingen live-rewrite i target-app.
 
-**3. Kodkvalitet och release-readiness**
-Splitta ui.py i moduler, extrahera JsonCache-helper, uppdatera README och SPEC.md, pinna modellrevisioner med checksums, lägg till security scanning i CI, och dokumentera privacy/clipboard-beteende ordentligt.
+**3. Mätning och regression-guard**
+Utöka `scripts/bench_parakeet.py` med `--mode streaming` som spelar upp FLEURS-klipp i wall-clock och mäter `release_t → finalize_return_t`, inte inferenstid. Lägg en "Streaming"-rad i `bench/BENCH.md`. Lägg `tests/test_streaming.py` med en `FakeStreamingBackend` som emitterar deterministiska partials och verifierar att (a) endast en `inject_text` anropas, (b) finaltexten matchar batch-resultatet, (c) Whisper-vägen är oförändrad.
+
+### Avgränsningar
+
+- Ingen live-paste/rewrite i target-app (Wisprflow-stil) — risken för janky UX i externa appar är för stor.
+- Whisper får inte streaming. Asymmetrin är OK — Whisper är CPU/egennamn-fallback, inte huvudvägen.
+- Ingen modell-switch under pågående inspelning.
 
 ## Arkitektur
 
