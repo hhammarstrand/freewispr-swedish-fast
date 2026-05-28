@@ -1,6 +1,7 @@
 import logging
 import re
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -502,14 +503,48 @@ class Transcriber:
             raw = self._transcribe_raw_whisper(audio)
 
         log.info("Rå text mottagen (%s)", _text_meta(raw))
-        text = _NOISE_PLACEHOLDERS.sub("", raw)
-        text = corr_module.apply(text)
-        text = _postprocess(text)
+        text = self._post_process(raw)
         log.info("Resultat (lokal) klart (%s)", _text_meta(text))
         return text
 
+    def _post_process(self, raw: str) -> str:
+        """Apply the shared post-processing pipeline to backend output.
+
+        Identical to the tail of ``transcribe_local()`` — strip Whisper-style
+        noise placeholders, apply personal corrections, then run the
+        normalisation regexes. Pulled out so streaming sessions can reuse
+        the same transform at finalize time without duplicating logic.
+        """
+        text = _NOISE_PLACEHOLDERS.sub("", raw)
+        text = corr_module.apply(text)
+        return _postprocess(text)
+
+    def start_stream(self,
+                     on_partial: Callable[[str], None] | None = None,
+                     ) -> "StreamingHandle | None":
+        """Begin a streaming session if the active backend supports it.
+
+        Returns a handle whose ``push_audio(audio, rate)`` is fed from the
+        audio thread during recording and whose ``finalize()`` returns the
+        post-processed final text at key-release. Returns ``None`` when the
+        backend is Whisper (no streaming path — callers fall back to the
+        existing post-release ``transcribe_local`` flow).
+
+        ``on_partial`` is invoked with the raw partial hypothesis (no
+        post-processing) — the UI is expected to display it as a hint, not
+        as final text.
+        """
+        if self._parakeet is None:
+            return None
+        backend_session = self._parakeet.start_stream(on_partial=on_partial)
+        return StreamingHandle(backend_session, post=self._post_process)
+
     def transcribe(self, audio: np.ndarray) -> str:
-        """Transcribe audio and apply LLM polish synchronously (backward compat)."""
+        """Transcribe audio and apply LLM polish synchronously (backward compat).
+
+        ``transcribe_local()`` already applies post-processing; this adds the
+        optional online polish pass when configured.
+        """
         text = self.transcribe_local(audio)
 
         # LLM polishing — optional, never blocks on failure
@@ -528,3 +563,37 @@ class Transcriber:
                          result.latency_ms, _text_meta(text))
 
         return text
+
+
+class StreamingHandle:
+    """Thin wrapper around a backend streaming session.
+
+    Sits between ``DictationMode`` and ``ParakeetBackend.StreamingSession``
+    so the call site doesn't need to know which backend produced it. Post-
+    processing (corrections, punctuation, capitalisation) runs at finalize
+    time, mirroring the batch ``transcribe_local()`` pipeline.
+    """
+
+    def __init__(self, backend_session, post: Callable[[str], str]) -> None:
+        self._sess = backend_session
+        self._post = post
+        self._finalized = False
+        self._final_text = ""
+
+    def push_audio(self, audio: np.ndarray, src_rate: int) -> None:
+        self._sess.push_audio(audio, src_rate)
+
+    def finalize(self, timeout: float = 5.0) -> str:
+        if self._finalized:
+            return self._final_text
+        raw = self._sess.finalize(timeout=timeout)
+        self._final_text = self._post(raw)
+        self._finalized = True
+        log.info("Streaming-finalize klart (%s)", _text_meta(self._final_text))
+        return self._final_text
+
+    def close(self) -> None:
+        try:
+            self._sess.close()
+        except Exception:
+            log.debug("StreamingHandle.close: bakomliggande session redan stängd")

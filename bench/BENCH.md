@@ -13,6 +13,25 @@
 | faster-whisper-small | 26.79% | 604 ms | 732 ms | 0.054x |
 | faster-whisper-medium | 18.45% | 2097 ms | 3032 ms | 0.186x |
 
+### Streaming (perceived release→text latency)
+
+The new repo goal targets *perceived* latency — the wall-clock time
+between key-release and text becoming pasteable. Measured by replaying
+each clip in 50 ms chunks via `parakeet_backend.StreamingSession`, then
+timing the `finalize()` call after the last chunk lands. Numbers below
+are placeholders until the bench has been re-run on the dev GPU — see
+the `--mode streaming` flag in `scripts/bench_parakeet.py`.
+
+| Model | WER (norm) | release→text mean | release→text p95 |
+|---|---:|---:|---:|
+| parakeet-tdt-0.6b-v3 (streaming) | _TBD_ | _TBD_ | _TBD_ |
+
+Reproducing the streaming bench:
+
+```pwsh
+.\.venv-parakeet\Scripts\python.exe scripts/bench_parakeet.py --n 10 --device cuda --mode streaming
+```
+
 ## Decision: GO — integrate Parakeet as primary backend
 
 **Reasoning:**

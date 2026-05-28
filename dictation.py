@@ -63,7 +63,8 @@ class DictationMode:
                  mic_device: str | dict | None = None,
                  min_rms: float = DEFAULT_MIN_RMS,
                  paste_strategy: str = "auto",
-                 paste_threshold: int = 200):
+                 paste_threshold: int = 200,
+                 streaming: bool = False):
         self.transcriber = transcriber
         self.hotkey = hotkey
         # MicRecorder accepts str (legacy), dict (structured), or None.
@@ -73,6 +74,11 @@ class DictationMode:
         self.min_rms = min_rms
         self.paste_strategy = paste_strategy
         self.paste_threshold = int(paste_threshold)
+        # Streaming: run Parakeet inference during the hold for sub-100 ms
+        # paste latency. Falls back to the post-release batch path when the
+        # backend doesn't support streaming (Whisper) or when explicitly off.
+        self.streaming = bool(streaming)
+        self._stream = None  # type: ignore[assignment]
         self._active = False
         self._recording = False
         self._hook_handles: list = []
@@ -118,15 +124,31 @@ class DictationMode:
             except Exception:
                 pass
         self._hook_handles = []
+        # Tear down any in-flight streaming session — its worker thread
+        # would otherwise outlive the app if no key-release has fired.
+        self.recorder.on_chunk = None
+        stream = self._stream
+        self._stream = None
+        if stream is not None:
+            try:
+                stream.close()
+            except Exception:
+                pass
         # Signal worker to exit after it drains current job. Sentinel = None.
         self._worker_stop.set()
         # Drop stale queued recordings and guarantee the sentinel is delivered
-        # even when the bounded queue is full.
+        # even when the bounded queue is full. Close any streaming sessions
+        # attached to dropped jobs so their workers exit too.
         while True:
             try:
-                self._jobs.get_nowait()
+                job = self._jobs.get_nowait()
             except queue.Empty:
                 break
+            if isinstance(job, tuple) and len(job) >= 5 and job[4] is not None:
+                try:
+                    job[4].close()
+                except Exception:
+                    pass
         try:
             self._jobs.put_nowait(None)
         except queue.Full:
@@ -159,6 +181,27 @@ class DictationMode:
                     self.recorder.on_level = self.indicator.push_level
                 else:
                     self.recorder.on_level = None
+                # Start a streaming session if enabled and supported by the
+                # active backend. Wire raw audio chunks straight to it so
+                # inference overlaps with the hold; UI partials are throttled
+                # by the indicator.
+                self._stream = None
+                self.recorder.on_chunk = None
+                if self.streaming:
+                    try:
+                        on_partial = (self.indicator.show_partial
+                                      if self.indicator is not None
+                                      else None)
+                        self._stream = self.transcriber.start_stream(
+                            on_partial=on_partial,
+                        )
+                        if self._stream is not None:
+                            self.recorder.on_chunk = self._stream.push_audio
+                    except Exception as e:
+                        log.warning("Streaming-start misslyckades, faller "
+                                    "tillbaka till batch: %s", e)
+                        self._stream = None
+                        self.recorder.on_chunk = None
                 self.recorder.start_with_preroll()
                 sounds.play_start()
                 self.on_status("Lyssnar…")
@@ -167,6 +210,8 @@ class DictationMode:
                                         level_source=lambda: self.recorder.level)
             except Exception as e:
                 self._recording = False
+                self._stream = None
+                self.recorder.on_chunk = None
                 log.error("Mic start error: %s", e, exc_info=True)
                 sounds.play_error()
                 if self.indicator:
@@ -180,6 +225,11 @@ class DictationMode:
         # Detach the UI push callback before stop_fast so a late audio
         # callback can't redraw bars after we've switched to transcribe.
         self.recorder.on_level = None
+        # Stop pushing audio to the streaming session. The session keeps
+        # running until finalize() is called from the worker.
+        self.recorder.on_chunk = None
+        stream = self._stream
+        self._stream = None
         sounds.play_stop()
         # Stop the stream cheaply and hand back the captured audio. Downmix
         # and resample happen in the worker — keeping this hook callback
@@ -190,6 +240,11 @@ class DictationMode:
         try:
             audio, channels, rate = self.recorder.stop_fast_async()
         except Exception as e:
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
             log.error("Audio stop error: %s", e, exc_info=True)
             sounds.play_error()
             if self.indicator:
@@ -204,8 +259,13 @@ class DictationMode:
         # Enqueue for the worker. Bounded queue: if full (previous job(s)
         # still being transcribed/polished), drop and tell the user.
         try:
-            self._jobs.put_nowait((audio, channels, rate, rms))
+            self._jobs.put_nowait((audio, channels, rate, rms, stream))
         except queue.Full:
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
             log.warning("Transkriberingskö full — hoppar över denna")
             self.on_status("Upptagen — vänta…")
             if self.indicator:
@@ -232,14 +292,24 @@ class DictationMode:
                 log.error("Worker exception: %s", e, exc_info=True)
 
     def _process_job(self, audio_raw: np.ndarray, channels: int,
-                     rate: int, rms: float):
-        # Finalize off-hook: downmix + resample
-        audio = finalize_audio(audio_raw, channels, rate)
-        n = len(audio)
-        log.info("Audio: %d samples, RMS=%.5f", n, rms)
+                     rate: int, rms: float, stream=None):
+        # Gate on the raw, native-rate buffer. We don't need to downmix or
+        # resample just to count samples / check RMS — the running RMS from
+        # the audio callback is already correct, and length scales linearly
+        # with the sample rate, so the same threshold applied to native
+        # samples just needs to be rescaled.
+        n_raw = audio_raw.shape[0] if audio_raw is not None else 0
+        min_raw = int(MIN_AUDIO_SAMPLES * rate / 16000) if rate else MIN_AUDIO_SAMPLES
+        log.info("Audio: %d native samples @ %d Hz, RMS=%.5f", n_raw, rate, rms)
 
-        if n < MIN_AUDIO_SAMPLES:
-            log.info("Inspelning för kort (%d samples), ignorerar", n)
+        if n_raw < min_raw:
+            log.info("Inspelning för kort (%d < %d native samples), ignorerar",
+                     n_raw, min_raw)
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
             self.on_status(f"Klar — håll {self.hotkey.upper()}")
             if self.indicator:
                 self.indicator.hide(delay_ms=0)
@@ -248,13 +318,22 @@ class DictationMode:
         if rms < self.min_rms:
             log.info("Inspelning för tyst (RMS=%.5f < %.5f), ignorerar",
                      rms, self.min_rms)
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
             self.on_status(f"Inget hördes — håll {self.hotkey.upper()}")
             if self.indicator:
                 self.indicator.show("Inget hördes", state="error")
                 self.indicator.hide(delay_ms=1500)
             return
 
-        self._transcribe(audio)
+        if stream is not None:
+            self._finalize_streaming(stream)
+        else:
+            audio = finalize_audio(audio_raw, channels, rate)
+            self._transcribe(audio)
 
     def _transcribe(self, audio: np.ndarray):
         try:
@@ -265,53 +344,90 @@ class DictationMode:
             # Use local-only transcription so the result is pasted immediately;
             # LLM polish runs asynchronously in the background if enabled.
             text = self.transcriber.transcribe_local(audio)
-            # Apply snippet expansion — if full text is a trigger, replace it
-            text = snippet_module.expand(text)
-            log.info("Resultat klart (%s)", _text_meta(text))
-            if text.strip():
-                if self._worker_stop.is_set() or not self._active:
-                    log.info("Hoppar över paste från stale transkribering")
-                    return
-                inject_text(
-                    text,
-                    active_modifiers=self._modifier_keys,
-                    strategy=self.paste_strategy,
-                    paste_threshold=self.paste_threshold,
-                )
-                self.on_status(f"Klistrad — håll {self.hotkey.upper()} igen")
-                if self.indicator:
-                    self.indicator.show("Klistrad", state="done")
-                    self.indicator.hide(delay_ms=1800)
-                # Launch async LLM polish if enabled
-                if (self.transcriber.llm_enabled
-                        and self.transcriber.llm_api_key
-                        and text.strip()):
-                    t = threading.Thread(
-                        target=self._polish_async,
-                        args=(text,),
-                        daemon=True,
-                        name="llm-polish",
-                    )
-                    t.start()
-            else:
-                self.on_status(f"Inget hördes — håll {self.hotkey.upper()}")
-                if self.indicator:
-                    self.indicator.show("Inget hördes", state="error")
-                    self.indicator.hide(delay_ms=1500)
+            self._deliver_text(text)
         except Exception as e:
-            log.error("Transkribering misslyckades: %s", e, exc_info=True)
-            self.on_status(f"Fel — håll {self.hotkey.upper()}")
+            self._report_error(e)
+
+    def _finalize_streaming(self, stream):
+        """Pull the final hypothesis from a streaming session and deliver it.
+
+        The streaming worker has already been transcribing in parallel with
+        the hold, so this call usually returns within tens of ms (either
+        the cached partial or one short tail pass).
+        """
+        try:
+            if self._worker_stop.is_set() or not self._active:
+                log.info("Hoppar över stale streaming-finalize efter stopp")
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+                return
+            log.info("Finalize streaming-session…")
+            text = stream.finalize()
+            self._deliver_text(text)
+        except Exception as e:
+            try:
+                stream.close()
+            except Exception:
+                pass
+            self._report_error(e)
+
+    def _deliver_text(self, text: str):
+        """Paste post-processed text and trigger async LLM polish if on.
+
+        Shared finishing path for the batch and streaming flows. Bails out
+        when the worker has been signalled to stop between transcribe and
+        paste (the user may have closed the app or restarted the dictation
+        loop in that window).
+        """
+        text = snippet_module.expand(text)
+        log.info("Resultat klart (%s)", _text_meta(text))
+        if text.strip():
+            if self._worker_stop.is_set() or not self._active:
+                log.info("Hoppar över paste från stale transkribering")
+                return
+            inject_text(
+                text,
+                active_modifiers=self._modifier_keys,
+                strategy=self.paste_strategy,
+                paste_threshold=self.paste_threshold,
+            )
+            self.on_status(f"Klistrad — håll {self.hotkey.upper()} igen")
             if self.indicator:
-                # Long stack-trace strings push the indicator off-screen and
-                # leak internal paths to the user. Show only the first line
-                # of the first message, with a sane upper bound.
-                err_label = type(e).__name__
-                err_msg = str(e).splitlines()[0] if str(e) else ""
-                if len(err_msg) > 80:
-                    err_msg = err_msg[:77] + "..."
-                pretty = f"{err_label}: {err_msg}" if err_msg else err_label
-                self.indicator.show(f"Fel: {pretty}", state="error")
-                self.indicator.hide(delay_ms=5000)
+                self.indicator.show("Klistrad", state="done")
+                self.indicator.hide(delay_ms=1800)
+            # Launch async LLM polish if enabled
+            if (self.transcriber.llm_enabled
+                    and self.transcriber.llm_api_key
+                    and text.strip()):
+                t = threading.Thread(
+                    target=self._polish_async,
+                    args=(text,),
+                    daemon=True,
+                    name="llm-polish",
+                )
+                t.start()
+        else:
+            self.on_status(f"Inget hördes — håll {self.hotkey.upper()}")
+            if self.indicator:
+                self.indicator.show("Inget hördes", state="error")
+                self.indicator.hide(delay_ms=1500)
+
+    def _report_error(self, e: Exception):
+        log.error("Transkribering misslyckades: %s", e, exc_info=True)
+        self.on_status(f"Fel — håll {self.hotkey.upper()}")
+        if self.indicator:
+            # Long stack-trace strings push the indicator off-screen and
+            # leak internal paths to the user. Show only the first line
+            # of the first message, with a sane upper bound.
+            err_label = type(e).__name__
+            err_msg = str(e).splitlines()[0] if str(e) else ""
+            if len(err_msg) > 80:
+                err_msg = err_msg[:77] + "..."
+            pretty = f"{err_label}: {err_msg}" if err_msg else err_label
+            self.indicator.show(f"Fel: {pretty}", state="error")
+            self.indicator.hide(delay_ms=5000)
 
     def _polish_async(self, local_text: str):
         """Run LLM polish in the background after local text has been pasted.

@@ -118,6 +118,7 @@ def _make_dictation(transcriber):
         min_rms=float(_config.get("min_rms", DEFAULT_MIN_RMS)),
         paste_strategy=_config.get("paste_strategy", "auto"),
         paste_threshold=int(_config.get("paste_threshold", 200)),
+        streaming=bool(_config.get("streaming", False)),
     )
 
 

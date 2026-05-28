@@ -118,6 +118,7 @@ class FloatingIndicator:
         self._root = root
         self._win: tk.Toplevel | None = None
         self._label: tk.Label | None = None
+        self._partial_label: tk.Label | None = None
         self._canvas: tk.Canvas | None = None
         self._bars: list[int] = []
         self._bar_heights = [self._BAR_MIN] * self._NUM_BARS
@@ -133,6 +134,12 @@ class FloatingIndicator:
         self._pending_push: bool = False
         self._last_push_ms: float = 0.0
         self._PUSH_MIN_INTERVAL_MS = 33.0  # ~30 Hz max redraw
+        # Partial hypothesis from the streaming session. Throttled the same
+        # way as push_level — the streaming worker ticks ~3 Hz so this is a
+        # belt-and-braces guard against an over-eager backend.
+        self._pending_partial: str | None = None
+        self._partial_after_id = None
+        self._PARTIAL_MIN_INTERVAL_MS = 200.0  # ≤ 5 Hz redraw
 
     @property
     def _canvas_w(self) -> int:
@@ -153,6 +160,40 @@ class FloatingIndicator:
             self._root.after_cancel(self._hide_job)
             self._hide_job = None
         self._root.after(0, self._show, message, state)
+
+    def show_partial(self, text: str) -> None:
+        """Thread-safe push of a partial streaming hypothesis.
+
+        Called from the streaming session's worker thread at ~3 Hz. Coalesces
+        rapid updates (the streaming backend may emit faster than the user
+        can read) and only marshals one Tk redraw at a time. Cleared when
+        the state transitions away from ``listen``.
+        """
+        if self._state != "listen" or self._win is None:
+            return
+        self._pending_partial = (text or "").strip()
+        if self._partial_after_id is not None:
+            return
+        self._partial_after_id = self._root.after(
+            int(self._PARTIAL_MIN_INTERVAL_MS), self._consume_partial,
+        )
+
+    def _consume_partial(self):
+        self._partial_after_id = None
+        if self._state != "listen" or self._partial_label is None:
+            self._pending_partial = None
+            return
+        text = self._pending_partial or ""
+        self._pending_partial = None
+        # Limit to one line — long hypotheses get a trailing ellipsis so the
+        # pill doesn't grow off-screen on each tick.
+        if len(text) > 60:
+            text = text[:57] + "…"
+        try:
+            self._partial_label.configure(text=text)
+        except tk.TclError:
+            # The window was destroyed between scheduling and consume.
+            pass
 
     def push_level(self, level: float) -> None:
         """Thread-safe push of a new mic RMS level from the audio callback.
@@ -202,16 +243,29 @@ class FloatingIndicator:
             outer = tk.Frame(self._win, bg=BG2, padx=14, pady=7)
             outer.pack()
 
+            top_row = tk.Frame(outer, bg=BG2)
+            top_row.pack(side="top", anchor="w")
+
             self._canvas = tk.Canvas(
-                outer, width=self._canvas_w, height=self._CANVAS_H,
+                top_row, width=self._canvas_w, height=self._CANVAS_H,
                 bg=BG2, highlightthickness=0,
             )
             self._canvas.pack(side="left", padx=(0, 10))
             self._create_bars(color)
 
-            self._label = tk.Label(outer, text=message, bg=BG2, fg=FG,
+            self._label = tk.Label(top_row, text=message, bg=BG2, fg=FG,
                                    font=("Segoe UI", 10))
             self._label.pack(side="left")
+
+            # Streaming partial — a thinner subtitle line that only appears
+            # while ``show_partial`` is being called from the listen state.
+            # Kept empty (and effectively invisible) otherwise.
+            self._partial_label = tk.Label(
+                outer, text="", bg=BG2, fg=FG2,
+                font=("Segoe UI", 9), wraplength=420, justify="left",
+                anchor="w",
+            )
+            self._partial_label.pack(side="top", anchor="w", pady=(2, 0))
 
             self._win.update_idletasks()
             sw = self._win.winfo_screenwidth()
@@ -221,6 +275,15 @@ class FloatingIndicator:
             if self._label:
                 self._label.configure(text=message)
             self._recolor_bars(color)
+
+        # Any state change clears partial text so the previous utterance's
+        # hypothesis can't bleed into the next press.
+        self._pending_partial = None
+        if self._partial_label is not None:
+            try:
+                self._partial_label.configure(text="")
+            except tk.TclError:
+                pass
 
         # Cancel any previous animation
         if self._anim_job:
@@ -327,11 +390,19 @@ class FloatingIndicator:
         if self._anim_job:
             self._root.after_cancel(self._anim_job)
             self._anim_job = None
+        if self._partial_after_id is not None:
+            try:
+                self._root.after_cancel(self._partial_after_id)
+            except Exception:
+                pass
+            self._partial_after_id = None
+        self._pending_partial = None
         self._level_source = None
         if self._win:
             self._win.destroy()
             self._win = None
             self._label = None
+            self._partial_label = None
             self._canvas = None
             self._bars = []
 

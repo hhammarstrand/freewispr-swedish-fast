@@ -42,6 +42,12 @@ DEFAULTS = {
     # running. Off by default for privacy.
     "preroll_enabled": False,
     "preroll_seconds": 0.5,
+    # Streaming: run Parakeet inference in the background while the user
+    # is still holding the hotkey, so most of the work is done by the
+    # time they release. Goal: sub-100 ms perceived latency. Off by
+    # default until bench validates against real-world dictation;
+    # Parakeet backend only. See bench/BENCH.md for the streaming row.
+    "streaming": False,
 }
 
 

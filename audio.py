@@ -208,6 +208,12 @@ class MicRecorder:
         # polling timer. Must be cheap + thread-safe; the indicator throttles
         # and marshals to Tk.
         self.on_level = None  # type: ignore[assignment]
+        # Optional callback fired from the audio thread with each raw
+        # callback chunk and its native sample rate. Used by the streaming
+        # transcription path (parakeet_backend.StreamingSession) to feed
+        # inference during recording. Must be cheap + non-blocking; the
+        # session does its own resample/inference off-thread.
+        self.on_chunk = None  # type: ignore[assignment]
         # Normalise to (name, api, index) tuple regardless of input shape.
         if isinstance(device, dict):
             self._device_name = device.get("name") or None
@@ -533,6 +539,19 @@ class MicRecorder:
                 except Exception:
                     # Never let a UI callback take down the audio thread.
                     pass
+        chunk_cb = self.on_chunk
+        if chunk_cb is not None:
+            # Hand the raw chunk to the streaming session. Pass the
+            # native rate so the session can downmix and resample on
+            # its own thread — the audio callback must not block.
+            try:
+                if self._buffer_channels > 1:
+                    raw = indata[:n]
+                else:
+                    raw = indata[:n].ravel() if indata.ndim > 1 else indata[:n]
+                chunk_cb(raw, getattr(self, "_rate", TARGET_RATE))
+            except Exception:
+                pass
 
     def rms(self) -> float:
         """Return RMS of all captured audio so far.
